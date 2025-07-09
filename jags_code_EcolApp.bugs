@@ -1,0 +1,50 @@
+model{  
+
+	### Likelihood
+	for(i in 1:Nts){
+		for(j in 1:Nyears){
+			Y[i,j] ~ dnegbin(p[i,j],r) # Negative Binomial distribution 
+			p[i,j] <- r/(r+lambda[i,j])
+			log(lambda[i,j]) <- alpha[i] + alpha.T[stormTime[j],stormSite[i]] + beta1*ObsAge[i,j] + beta2*FirstSurv[i,j] + eps[j] # Process eaquation
+		}
+		alpha[i] ~ dnorm(0,tau.alpha) # site-specific effects
+	}
+  
+	### Define PRIORS   
+	for(j in 1:Nyears){
+		eps[j] ~ dnorm(0,tau.eps) # time-specific effects
+	}
+	tau.eps <- pow(sd.eps,-2)
+	sd.eps ~ dt(0,1,1)T(0,10) # standard deviation of time-specific effects (Half-Cauchy prior)
+
+	tau.alpha <- pow(sd.alpha,-2) 
+	sd.alpha ~ dt(0,1,1)T(0,10)  # standard deviation of site-specific effects (Half-Cauchy prior)
+  
+	# Priors for observer effects
+	beta1 ~ dnorm(0,0.1) 
+	beta2 ~ dnorm(0,0.1) 
+  
+	r ~ dunif(0,100) # overdispersion parameter
+  
+	# Priors for intercepts in each period and treatment
+	alpha.T[1,1] ~ dnorm(0,0.1) # Control-Before
+	alpha.T[2,1] ~ dnorm(0,0.1) # Impact-Before
+	alpha.T[1,2] ~ dnorm(0,0.1) # Control-After
+	alpha.T[2,2] ~ dnorm(0,0.1) # Impact-After
+
+	### Assess model fit using a sum-of-squared-type discrepancy (posterior predictive checks)
+	for(i in 1:Nts){
+		for(j in 1:Nyears){
+			predicted[i,j] <- ((r*(1-p[i,j]))/p[i,j]+0.01) # Predicted values
+			res.1[i,j] <- (Y[i,j]-predicted[i,j])/sqrt((r*(1-p[i,j]))/pow(p[i,j],2)+0.01) # standardized residuals for the current dataset
+        
+			Y.new[i,j] ~ dnegbin(p[i,j],r) # Generate a new dataset at each MCMC iteration
+			res.2[i,j] <- (Y.new[i,j]-predicted[i,j])/sqrt((r*(1-p[i,j]))/pow(p[i,j],2)+0.01) # standardized residuals for the new dataset
+		}
+	}
+	fit <- sum(pow(res.1[,],2)) # Sum of squared standardized residuals for the current dataset
+	fit.new <- sum(pow(res.2[,],2)) # Sum of squared standardized residuals for the new dataset
+	test <- step(fit.new-fit)   	
+	bpvalue <- mean(test) # Bayesian P-values
+	
+}
