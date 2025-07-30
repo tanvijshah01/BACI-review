@@ -36,15 +36,15 @@ library(dplyr)
 
 ```{r}
 
-data_filename = '20250128_LinusBlomqvist_CBC_CBC_Circle_Species_Report.csv'
-effort_filename = '20250128_LinusBlomqvist_CBC_CBC_Effort_Many_Types_Report.csv'
+data_filename = '20250723_TanviShah_CBC_Circle_Species_Report.csv'
+effort_filename = '20250723_TanviShah_CBC_Effort_Many_Types_Report.csv'
 
 # navigate two folders up
 top_dir <- normalizePath(file.path(getwd(), "..", ".."))
 data_dir <- file.path(top_dir, "data", "raw_data", "Wauchope")
-cbc_data <- read_csv(file.path(data_dir,'LinusBlomqvist_CBC_Data_Request', data_filename))
+cbc_data <- read_csv(file.path(data_dir,'TanviShah_CBC_Data_Request', data_filename))
 
-effort_data <- read_csv(file.path(data_dir, 'LinusBlomqvist_CBC_Data_Request', effort_filename)) %>% clean_names()
+effort_data <- read_csv(file.path(data_dir, 'TanviShah_CBC_Data_Request', effort_filename)) %>% clean_names()
 
 AviList <- read_excel(file.path(top_dir, "data", "raw_data", "Wauchope", "AviList-v2025.xlsx")) %>% clean_names()
                       
