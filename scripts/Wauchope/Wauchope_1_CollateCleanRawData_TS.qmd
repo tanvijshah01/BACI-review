@@ -3,14 +3,17 @@ title: "Wauchope_1_CollateCleanRawData_TS"
 format: html
 editor: visual
 author: Tanvi Shah
+date: 7/14/25
 ---
 
 ## Load Libraries
 
 ```{r}
 library(here)
+library(janitor)
 library(tidyverse)
 library(sp)
+library(readxl)
 # library(rgdal) - no longer exists
 library(ggplot2)
 library(raster)
@@ -38,20 +41,32 @@ effort_filename = '20250128_LinusBlomqvist_CBC_CBC_Effort_Many_Types_Report.csv'
 
 # navigate two folders up
 top_dir <- normalizePath(file.path(getwd(), "..", ".."))
+data_dir <- file.path(top_dir, "data", "raw_data", "Wauchope")
+cbc_data <- read_csv(file.path(data_dir,'LinusBlomqvist_CBC_Data_Request', data_filename))
 
-cbc_data <- read_csv(file.path(top_dir, "data", "raw_data", "Wauchope", data_filename))
-eff <- read_csv(file.path(top_dir, "data", "raw_data", "Wauchope", effort_filename))
+effort_data <- read_csv(file.path(data_dir, 'LinusBlomqvist_CBC_Data_Request', effort_filename)) %>% clean_names()
+
+AviList <- read_excel(file.path(top_dir, "data", "raw_data", "Wauchope", "AviList-v2025.xlsx")) %>% clean_names()
                       
 
 ```
+
+## Changes from Original (7/14/25)
+
+1\) Use of only one dataset (HW seems to have several)
+
+2\) Removal of SORT_CBC column. Not in current CBC dataset, not used in computations so far
+
+3\) Removal of Taxonomic Filtering Steps. Attempting to gain access to Birdlife data. Currently unsure what all is in DataFP folder referenced by Wauchope. Proceeding without using Taxonomic filtering, if necessary will circle back. Maybe not as necessary for CBC data
 
 ## Initial Clean
 
 ```{r}
 
 # CBC Initial Clean
-CBCCounts <- raw_cbc_data
-names(CBCCounts) <- c("OID", "Abbrev", "Name", "Latitude", "Longitude", "Subnational_code", "Country_code", "Count_yr", "Cnt_dt", "COM_NAME", "SCI_NAME", "how_many", "TotalSpecies", "Editor_comment", "SORT_CBC")
+CBCCounts <- cbc_data
+names(CBCCounts) <- c("OID", "Abbrev", "Name", "Latitude", "Longitude", "Subnational_code", "Country_code", "Count_yr", "Cnt_dt", "COM_NAME", "SCI_NAME", "how_many", "TotalSpecies", "Editor_comment")
+
 CBCCounts$Abbrev <- gsub('"', '', as.character(CBCCounts$Abbrev))
 CBCCounts$Subnational_code <- gsub('"', '', as.character(CBCCounts$Subnational_code))
 CBCCounts$Country_code <- gsub('"', '', as.character(CBCCounts$Country_code))
@@ -60,81 +75,114 @@ CBCCounts$COM_NAME <- gsub('"', '', as.character(CBCCounts$COM_NAME))
 CBCCounts$Name <- gsub('"', '', as.character(CBCCounts$Name))
 CBCCounts$SCI_NAME <- gsub('"', '', as.character(CBCCounts$SCI_NAME))
 
-
-# (Q) - don't have two separate datasets. think ok to ignore
-
-# CBCCounts <- rbind(CBCCounts, Years1_50)
-# CBCCounts <- rbind(CBCCounts, Years117_118)
-# CBCCounts$SORT_CBC <- as.numeric(gsub(',', '', as.character(CBCCounts$SORT_CBC)))
 ```
 
 ## Taxonomic Filtering
 
+#### TS approach (CBC data only):
+
+1\) Eliminate messy values (sp, \\, etc)
+
+2\) Filter AviList for waterbird families of interest (stated in p. 3 of [Wauchope SI](https://static-content.springer.com/esm/art%3A10.1038%2Fs41586-022-04617-0/MediaObjects/41586_2022_4617_MOESM1_ESM.pdf))
+
+3\) Compare CBC data to filtered AviList, keep only waterbird records
+
 ```{r}
-#### Taxonomic Cleaning CBC ####
+### TS Code - Taxonomic Cleaning CBC #########
+waterbird_families <- c(
+  "Gaviidae", "Podicipedidae", "Pelecanidae", "Phalacrocoracidae", "Anhingidae",
+  "Ardeidae", "Balaenicipitidae", "Scopidae", "Ciconiidae", "Threskiornithidae",
+  "Phoenicopteridae", "Anhimidae", "Anatidae", "Pedionomidae", "Gruidae",
+  "Aramidae", "Rallidae", "Heliornithidae", "Eurypygidae", "Jacanidae",
+  "Rostratulidae", "Dromadidae", "Haematopodidae", "Ibidorhynchidae", 
+  "Recurvirostridae", "Burhinidae", "Glareolidae", "Charadriidae", 
+  "Scolopacidae", "Thinocoridae", "Laridae", "Rynchopidae"
+) 
+
+filtered_avi <- AviList %>% filter(family %in% waterbird_families )
+# check that all have a match
 
 CBCSpecies <- as.data.frame(unique(CBCCounts$SCI_NAME))
 names(CBCSpecies) <- "Species"
+### combine synonyms here?
+## check how many real species are in CBC data
 
-# (Q) Unsure where BOTWNames comes from --- "Birds of the World"?
 CBCSpecies$FinalName <- apply(CBCSpecies, 1, function (x){
-  if(x["Species"] %in% BOTWNames$SCINAME){
+  if(x["Species"] %in% filtered_avi$scientific_name){
     x["Species"]
   } else {"NoMatch"}
 })
 
-CBCNoMatch <- subset(CBCSpecies, FinalName=="NoMatch")
+cat("Number of Matches represents number of CBC Species records that are within the list of families defined by Wauchope", "\n")
+cat("**Number of No Matches using AviList = ", nrow(CBCSpecies[CBCSpecies$FinalName == "NoMatch",]), "\n")
+cat("**Number of Matches =",nrow(CBCSpecies[!CBCSpecies$FinalName == "NoMatch",]))
+# so 400 waterbird species are 
+```
 
-#TreeofLifeID <- pbmclapply(CBCNoMatch$Species, function (x) tryCatch(as.data.frame(get_tolid_(as.character(x))), error=function(e){"NoMatch"}), mc.cores=8)
-#names(TreeofLifeID) <- CBCNoMatch$Species
-#save(TreeofLifeID, file=paste0(DataFP, "WaterbirdData_2020/CBC/TreeofLifeID.RData"))
-load(file=paste0(DataFP, "WaterbirdData_2020/CBC/TreeofLifeID.RData"))
+### Original HW Code 
 
-SpeciesSynonyms <- TreeofLifeCleaning(TreeofLifeID, CBCNoMatch)
-write.csv(subset(SpeciesSynonyms, FinalName=="NoMatch"), paste0(DataFP, "WaterbirdData_2020/CBC/Cleaning/NoMatchSpecies.csv"), row.names=FALSE)
+```{r}
 
-#Load up cleaned species
-NameUpdates <- read.csv(paste0(DataFP, "WaterbirdData_2020/CBC/Cleaning/NoMatchSpeciesResearchedCBC.csv"))
+# #### Original HW Code -- Taxonomic Cleaning CBC ####
+# 
+# CBCSpecies <- as.data.frame(unique(CBCCounts$SCI_NAME))
+# names(CBCSpecies) <- "Species"
+# 
+# # (Q) Unsure where BOTWNames comes from --- "Birds of the World"?
 
-CBCTaxonCleaned <- PostUpdateTaxonCleaning(NameUpdates, SpeciesSynonyms)
-
-#Now add back into the CBC that was cleaned to begin with:
-names(CBCSpecies) <- c("GivenSpecies", "Species")
-
-CBCTaxonCleaned <- rbind(subset(CBCSpecies, Species!="NoMatch"), CBCTaxonCleaned, fill=TRUE)
-if(nrow(CBCTaxonCleaned)!=nrow(CBCSpecies)){stop("Somethings gone wrong with synonym matching!")}
-CBCTaxonCleaned[is.na(CBCTaxonCleaned$HybridFlag)]$HybridFlag <- 0
-
-#Add in higher order taxonomy
-GetSISID <- merge(CBCTaxonCleaned, unique(BOTWNames[,c("SCINAME", "SISRecID")]), by.x="Species", by.y="SCINAME", all.x=TRUE)
-if(nrow(GetSISID) != nrow(CBCTaxonCleaned)){stop("Matching issue!")}
-if(nrow(GetSISID[!is.na(GetSISID$SISRecID),]) != nrow(subset(CBCTaxonCleaned, HybridFlag==0))){stop("Matching issue!")}
-
-GetSISID2 <- as.data.frame(merge(GetSISID, Tax, by=c("SISRecID", "Species"), all.x=TRUE))
-if(nrow(GetSISID2) != nrow(CBCTaxonCleaned)){stop("Matching issue!")}
-if(nrow(GetSISID2[!is.na(GetSISID2$SISRecID),]) != nrow(subset(CBCTaxonCleaned, HybridFlag==0))){stop("Matching issue!")}
-
-GetSISID2$Genus <- NA
-GetSISID2[GetSISID2$HybridFlag==0,]$Genus <- str_split_fixed(GetSISID2[GetSISID2$HybridFlag==0,]$Species, "[ ]", 2)[,1]
-
-###Higher order matching check###
-HybridGenus <- unique(subset(GetSISID2, HybridLevel=="Genus")$HybridValue)
-HybridGenus <- HybridGenus[!HybridGenus %in% unique(Tax$Genus)]
-
-HybridFamily <- unique(subset(GetSISID2, HybridLevel=="Family")$HybridValue)
-HybridFamily <- HybridFamily[!HybridFamily %in% unique(Tax$Family)]
-
-HybridOrder <- unique(subset(GetSISID2, HybridLevel=="Order")$HybridValue)
-HybridOrder <- HybridOrder[!HybridOrder %in% unique(Tax$Order)]
-
-#Add back to count data
-CBCCounts2 <- merge(GetSISID2, CBCCounts, by.x="GivenSpecies", by.y="SCI_NAME", all=T)
-if(nrow(CBCCounts2)!=nrow(CBCCounts)){stop("Something's gone wrong!")}
-write.csv(CBCCounts2, paste0(DataFP, "WaterbirdData_2020/CBC/CBCCounts_SpeciesCleaned.csv"), row.names = FALSE)
-
-#### CBC Effort Cleaning + Double Counts ####
-#Read in count data
-CBCCounts <- fread(paste0(DataFP, "WaterbirdData_2020/CBC/CBCCounts_SpeciesCleaned.csv"))
+# 
+# CBCNoMatch <- subset(CBCSpecies, FinalName=="NoMatch")
+# 
+# #TreeofLifeID <- pbmclapply(CBCNoMatch$Species, function (x) tryCatch(as.data.frame(get_tolid_(as.character(x))), error=function(e){"NoMatch"}), mc.cores=8)
+# #names(TreeofLifeID) <- CBCNoMatch$Species
+# #save(TreeofLifeID, file=paste0(DataFP, "WaterbirdData_2020/CBC/TreeofLifeID.RData"))
+# #load(file=paste0(DataFP, "WaterbirdData_2020/CBC/TreeofLifeID.RData"))
+# 
+# SpeciesSynonyms <- TreeofLifeCleaning(TreeofLifeID, CBCNoMatch)
+# write.csv(subset(SpeciesSynonyms, FinalName=="NoMatch"), paste0(DataFP, "WaterbirdData_2020/CBC/Cleaning/NoMatchSpecies.csv"), row.names=FALSE)
+# 
+# #Load up cleaned species
+# NameUpdates <- read.csv(paste0(DataFP, "WaterbirdData_2020/CBC/Cleaning/NoMatchSpeciesResearchedCBC.csv"))
+# 
+# CBCTaxonCleaned <- PostUpdateTaxonCleaning(NameUpdates, SpeciesSynonyms)
+# 
+# #Now add back into the CBC that was cleaned to begin with:
+# names(CBCSpecies) <- c("GivenSpecies", "Species")
+# 
+# CBCTaxonCleaned <- rbind(subset(CBCSpecies, Species!="NoMatch"), CBCTaxonCleaned, fill=TRUE)
+# if(nrow(CBCTaxonCleaned)!=nrow(CBCSpecies)){stop("Somethings gone wrong with synonym matching!")}
+# CBCTaxonCleaned[is.na(CBCTaxonCleaned$HybridFlag)]$HybridFlag <- 0
+# 
+# #Add in higher order taxonomy
+# GetSISID <- merge(CBCTaxonCleaned, unique(BOTWNames[,c("SCINAME", "SISRecID")]), by.x="Species", by.y="SCINAME", all.x=TRUE)
+# if(nrow(GetSISID) != nrow(CBCTaxonCleaned)){stop("Matching issue!")}
+# if(nrow(GetSISID[!is.na(GetSISID$SISRecID),]) != nrow(subset(CBCTaxonCleaned, HybridFlag==0))){stop("Matching issue!")}
+# 
+# GetSISID2 <- as.data.frame(merge(GetSISID, Tax, by=c("SISRecID", "Species"), all.x=TRUE))
+# if(nrow(GetSISID2) != nrow(CBCTaxonCleaned)){stop("Matching issue!")}
+# if(nrow(GetSISID2[!is.na(GetSISID2$SISRecID),]) != nrow(subset(CBCTaxonCleaned, HybridFlag==0))){stop("Matching issue!")}
+# 
+# GetSISID2$Genus <- NA
+# GetSISID2[GetSISID2$HybridFlag==0,]$Genus <- str_split_fixed(GetSISID2[GetSISID2$HybridFlag==0,]$Species, "[ ]", 2)[,1]
+# 
+# ###Higher order matching check###
+# HybridGenus <- unique(subset(GetSISID2, HybridLevel=="Genus")$HybridValue)
+# HybridGenus <- HybridGenus[!HybridGenus %in% unique(Tax$Genus)]
+# 
+# HybridFamily <- unique(subset(GetSISID2, HybridLevel=="Family")$HybridValue)
+# HybridFamily <- HybridFamily[!HybridFamily %in% unique(Tax$Family)]
+# 
+# HybridOrder <- unique(subset(GetSISID2, HybridLevel=="Order")$HybridValue)
+# HybridOrder <- HybridOrder[!HybridOrder %in% unique(Tax$Order)]
+# 
+# #Add back to count data
+# CBCCounts2 <- merge(GetSISID2, CBCCounts, by.x="GivenSpecies", by.y="SCI_NAME", all=T)
+# if(nrow(CBCCounts2)!=nrow(CBCCounts)){stop("Something's gone wrong!")}
+# write.csv(CBCCounts2, paste0(DataFP, "WaterbirdData_2020/CBC/CBCCounts_SpeciesCleaned.csv"), row.names = FALSE)
+# 
+# #### CBC Effort Cleaning + Double Counts ####
+# #Read in count data
+# CBCCounts <- fread(paste0(DataFP, "WaterbirdData_2020/CBC/CBCCounts_SpeciesCleaned.csv"))
 
 ```
 
@@ -143,8 +191,10 @@ CBCCounts <- fread(paste0(DataFP, "WaterbirdData_2020/CBC/CBCCounts_SpeciesClean
 ```{r}
 
 #Get Effort
-CBCEffort <- raw_cbc_effort
-names(CBCEffort) <- c("OID", "Abbrev", "Name", "Count_yr", "Country_code", "Distance", "Hours")
+CBCEffort <- effort_data
+names(CBCEffort) <- c("OID", "Abbrev", "Name", "Count_yr", "Country_code", "Description", "Distance","Distance_unit", "Hours")
+
+
 
 #####  HW- Original code  ############
 
@@ -162,32 +212,50 @@ CBCEffort <- CBCEffort[complete.cases(CBCEffort$Hours),]
 CBCEffort <- CBCEffort[complete.cases(CBCEffort$Distance),]
 
 ### (Q) not sure what this  is doing... ##############################
-# CBCEffortThou <- CBCEffort[sample(1:nrow(CBCEffort), 1000, replace=FALSE),]
-# plot(CBCEffortThou$Hours, CBCEffortThou$Distance)
+CBCEffortThou <- CBCEffort[sample(1:nrow(CBCEffort), 1000, replace=TRUE),]
+plot(CBCEffortThou$Hours, CBCEffortThou$Distance)
 
 
 #Remove distance and zero count hours
 CBCEffort[,c("Distance", "Units", "Method", "Name", "Country_code")] <- NULL
-CBCEffort <- subset(CBCEffort, Hours!=0)
+CBCEffort2 <- subset(CBCEffort, Hours!=0)
 
 
 ########## (Q) Getting an error here - need to understand what this sum is doing...
 #Now combine hours
-keys <- colnames(CBCEffort)[!colnames(CBCEffort) %in% "Hours"]
-CBCEffort2 <- CBCEffort[,list(Hours=sum(Hours)),keys]
+# keys <- colnames(CBCEffort)[!colnames(CBCEffort) %in% "Hours"]
 
-CBCEffort2 <- CBCEffort[, .("Hours" = sum("Hours")), by = ..keys]
+# keys <- setdiff(colnames(CBCEffort), "Hours")
+# CBCEffort2 <- CBCEffort %>% 
+#   group_by(across(all_of(keys))) %>%
+#   summarise(Hours = sum(Hours, na.rm= TRUE))
 
+
+# CBCEffort2 <- CBCEffort %>%
+#   group_by(across(-Hours)) %>%
+#   summarise(
+#     Hours = sum(Hours, na.rm = TRUE),
+#     OID = first(OID),
+#     Abbrev = first(Abbrev),
+#     Count_yr = first(Count_yr),
+#     Description = first(Description),
+#     Distance_unit = first(Distance_unit),
+#     Hours = first(Hours)
+#   )
+  
 
 Check <- dcast(CBCEffort2, Abbrev + Count_yr~., length, value.var="Hours")
 if(max(unique(Check$.))!=1){stop("There are still cases of double hours!")}
 
+
 CBCCounts$SiteYear <- paste0(CBCCounts$Abbrev,"_", CBCCounts$Count_yr)
+CBCCounts_original <- CBCCounts # redundant, keeping for now...
+CBCCounts_premerge <- CBCCounts  %>% dplyr::select(-c(OID, Abbrev))
+
 CBCEffort2$SiteYear <- paste0(CBCEffort2$Abbrev,"_", CBCEffort2$Count_yr)
 CBCEffort2[,c("Abbrev", "Count_yr")] <- NULL
 
-CBCCounts <- merge(CBCCounts, CBCEffort2, by="SiteYear")
-
+CBCCounts3 <- merge(CBCCounts_premerge, CBCEffort2, by="SiteYear")
 #Now sort out dates
 CBCCounts[,c("Year", "Month", "Day")] <- as.data.frame(str_split_fixed(CBCCounts$Cnt_dt, "[-]", 3))
 CBCCounts$Month <- as.numeric(as.character(CBCCounts$Month))
@@ -201,32 +269,38 @@ CBCCounts[is.na(CBCCounts$Day),]$Day <- 0
 
 CBCCounts[,c("Count_yr", "Cnt_dt")] <- NULL
 
-#Now sort out double counts (sum by days counted, then mean by year)
-CBCCounts$SiteSpecYear <- paste0(CBCCounts$Abbrev, "_", CBCCounts$Species, "_", CBCCounts$Year)
-CBCCountsNoHybrids <- subset(CBCCounts, HybridFlag==0)
-
-#Sum by date
-CBCCountsNoHybrids[,c("COM_NAME", "GivenSpecies", "SORT_CBC", "Editor_comment", "TotalSpecies")] <- NULL
-keys <- colnames(CBCCountsNoHybrids)[!colnames(CBCCountsNoHybrids) %in% "how_many"]
-CBCCountsNoHybrids2 <- CBCCountsNoHybrids[,list(Count=sum(how_many)),keys]
-
-#Mean by year
-CBCCountsNoHybrids2[,c("Month", "Day")] <- NULL
-
-keys <- colnames(CBCCountsNoHybrids2)[!colnames(CBCCountsNoHybrids2) %in% "Count"]
-CBCCountsNoHybrids3 <- CBCCountsNoHybrids2[,list(Count=round(mean(Count))),keys]
-
-#Check
-DoubleCountCheck <- dcast(CBCCountsNoHybrids3, SiteSpecYear~., length, value.var="Count")
-if(max(unique(DoubleCountCheck$.))!=1){stop("There are still double counts!")}
-
-#Recombine Data
-CBCCountsHybrids <- subset(CBCCounts, HybridFlag==1)
-CBCCountsHybrids[,c("COM_NAME", "GivenSpecies", "SORT_CBC", "Editor_comment", "TotalSpecies", "Month", "Day", "how_many")] <- NULL
-CBCCountsHybrids$Count <- NA
-
-CBCCounts <- rbind(CBCCountsHybrids, CBCCountsNoHybrids3)
-CBCCounts[,c("SiteSpecYear", "SiteYear")] <- NULL
+# #Now sort out double counts (sum by days counted, then mean by year)
+# CBCCounts$SiteSpecYear <- paste0(CBCCounts$Abbrev, "_", CBCCounts$Species, "_", CBCCounts$Year)
+# CBCCountsNoHybrids <- subset(CBCCounts, HybridFlag==0)
+# 
+# #Sum by date
+# # NOTE: removing SORT_CBC column compared to original, because doesn't exist in this dataset
+# 
+# # (Q) - What are hybrids? there's no hybrid flag...
+# CBCCountsNoHybrids[,c("COM_NAME", "GivenSpecies", "Editor_comment", "TotalSpecies")] <- NULL
+# 
+# 
+# keys <- colnames(CBCCountsNoHybrids)[!colnames(CBCCountsNoHybrids) %in% "how_many"]
+# CBCCountsNoHybrids2 <- CBCCountsNoHybrids[,list(Count=sum(how_many)),keys]
+# 
+# #Mean by year
+# CBCCountsNoHybrids2[,c("Month", "Day")] <- NULL
+# 
+# keys <- colnames(CBCCountsNoHybrids2)[!colnames(CBCCountsNoHybrids2) %in% "Count"]
+# CBCCountsNoHybrids3 <- CBCCountsNoHybrids2[,list(Count=round(mean(Count))),keys]
+# 
+# #Check
+# DoubleCountCheck <- dcast(CBCCountsNoHybrids3, SiteSpecYear~., length, value.var="Count")
+# if(max(unique(DoubleCountCheck$.))!=1){stop("There are still double counts!")}
+# 
+# #Recombine Data
+# CBCCountsHybrids <- subset(CBCCounts, HybridFlag==1)
+# # NOTE: removing SORT_CBC column compared to original, because doesn't exist in this dataset
+# CBCCountsHybrids[,c("COM_NAME", "GivenSpecies", "Editor_comment", "TotalSpecies", "Month", "Day", "how_many")] <- NULL
+# CBCCountsHybrids$Count <- NA
+# 
+# CBCCounts <- rbind(CBCCountsHybrids, CBCCountsNoHybrids3)
+# CBCCounts[,c("SiteSpecYear", "SiteYear")] <- NULL
 
 #Remove multiple sites at the site coordinate:
 CBCCounts$Latitude <- round(CBCCounts$Latitude, 4)
@@ -239,9 +313,14 @@ CBCCounts <- CBCCounts[CBCCounts$Coordinates %in% subset(CBCCountsCast, .==1)$Co
 CBCCounts$Coordinates <- NULL
 
 #Check on a map
-Map(unique(CBCCounts[,c("Latitude", "Longitude", "Abbrev")]))
+#Map(unique(CBCCounts[,c("Latitude", "Longitude", "Abbrev")]))
 
-#Lovely
-write.csv(CBCCounts, paste0(DataFP, "WaterbirdData_2020/CBC/CBCCounts_SpeciesEffortCleaned.csv"), row.names=FALSE)
+# write.csv(CBCCounts, paste0(DataFP, "WaterbirdData_2020/CBC/CBCCounts_SpeciesEffortCleaned.csv"), row.names=FALSE)
+
+write.csv(CBCCounts, file.path(top_dir, "data", "output", "Wauchope", 'BirdCounts.csv'), row.names = FALSE)
+
+
+
+### (TS - NOTE --- need to fix bug in CBCEffort2, remove double hours... )
 
 ```

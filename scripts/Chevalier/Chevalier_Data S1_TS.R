@@ -13,11 +13,17 @@ require(boa)
 require(mcmcplots)
 require(R2jags)
 
-load("path/to/your_file.RData")
 
-top_dir <- normalizePath(file.path(getwd(), "..", ".."))
+
+# navigate two folders upgetwd
 wren_data_filename <- 'data_wren_EcolApp.Rdata'
-load(file.path(top_dir, "data", "raw_data", "Chevalier", wren_data_filename))
+data_path <- file.path(getwd(), "data", "raw_data", "Chevalier", wren_data_filename)
+load(data_path)
+data<-data.wren
+
+# top_dir <- normalizePath(file.path(getwd(), "..", ".."))
+#
+# load(file.path(top_dir, "data", "raw_data", "Chevalier", wren_data_filename))
 #------------------ Start of modeling section
 
 ### JAGS model
@@ -76,8 +82,8 @@ cat('model{
 store=1000
 nadap=1000
 chains=3
-nburn=10000
-thin=20
+nburn=2000
+thin=5
 
 ### Variables to monitor
 my_var=c("alpha.T","alpha","sd.alpha","beta1","beta2","r","eps","sd.eps","bpvalue","fit","fit.new")
@@ -85,7 +91,6 @@ my_var=c("alpha.T","alpha","sd.alpha","beta1","beta2","r","eps","sd.eps","bpvalu
 ### data to feed JAGS
 Nts=data$Nts # Number of time series (i.e. squares)
 
-## !!!!!!! ERROR HERE - object of type  losure not subsettable
 Nyears=data$Nyears # Number of years (i.e. 17 years from 1996 to 2012)
 
 Y=data$Y # Count matrix (nrow=Nts; ncol=Nyears)
@@ -112,9 +117,11 @@ end-start # time elapsed for computation
 ##########
 ### Model diagnostics
 ##########
+species = 'wren'
 
 # Check model convergence for all parameters -> Gelman and Rubin diagnostic + check of MCMC chains
-load(paste("out.mod.",species,".Rdata",sep=""))
+# load(paste("out.mod.",species,".Rdata",sep=""))
+load(paste("out.mod.",".Rdata",sep=""))
 out.mod=as.mcmc(out.mod)
 gelman=gelman.diag(out.mod,multivariate=FALSE,autoburnin=FALSE)
 max(gelman$psrf[,1],na.rm=T)# Rhat must be less than 1.1 for all parameters
