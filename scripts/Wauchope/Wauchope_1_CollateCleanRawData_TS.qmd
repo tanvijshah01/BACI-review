@@ -39,14 +39,27 @@ library(dplyr)
 data_filename = '20250723_TanviShah_CBC_Circle_Species_Report.csv'
 effort_filename = '20250723_TanviShah_CBC_Effort_Many_Types_Report.csv'
 
-# navigate two folders up
-top_dir <- normalizePath(file.path(getwd(), "..", ".."))
-data_dir <- file.path(top_dir, "data", "raw_data", "Wauchope")
-cbc_data <- read_csv(file.path(data_dir,'TanviShah_CBC_Data_Request', data_filename))
+## delete once upload is complete
+# navigate one folder up
+baci_home_dir <- normalizePath(file.path(getwd(), "..", "..",".."))
+curr_data_path <- file.path(baci_home_dir, 'data')
 
-effort_data <- read_csv(file.path(data_dir, 'TanviShah_CBC_Data_Request', effort_filename)) %>% clean_names()
+```
 
-AviList <- read_excel(file.path(top_dir, "data", "raw_data", "Wauchope", "AviList-v2025.xlsx")) %>% clean_names()
+```{r}
+cat("Current working directory: ", getwd(), "\n")
+cat("Parent directory: ", dirname(getwd()), "\n")
+```
+
+```{r}
+
+cbc_data <- read_csv(file.path(curr_data_path, 'raw_data','Wauchope','TanviShah_CBC_Data_Request', data_filename))
+
+
+effort_data <- read_csv(file.path(curr_data_path,'raw_data','Wauchope', 'TanviShah_CBC_Data_Request', effort_filename)) %>% clean_names()
+
+AviList <- read_excel(file.path(curr_data_path,"raw_data", "Wauchope", "AviList-v2025.xlsx")) %>% clean_names()
+
                       
 
 ```
@@ -88,7 +101,8 @@ CBCCounts$SCI_NAME <- gsub('"', '', as.character(CBCCounts$SCI_NAME))
 3\) Compare CBC data to filtered AviList, keep only waterbird records
 
 ```{r}
-### TS Code - Taxonomic Cleaning CBC #########
+### TS Code - Taxonomic Cleaning CBC # 
+
 waterbird_families <- c(
   "Gaviidae", "Podicipedidae", "Pelecanidae", "Phalacrocoracidae", "Anhingidae",
   "Ardeidae", "Balaenicipitidae", "Scopidae", "Ciconiidae", "Threskiornithidae",
@@ -96,11 +110,89 @@ waterbird_families <- c(
   "Aramidae", "Rallidae", "Heliornithidae", "Eurypygidae", "Jacanidae",
   "Rostratulidae", "Dromadidae", "Haematopodidae", "Ibidorhynchidae", 
   "Recurvirostridae", "Burhinidae", "Glareolidae", "Charadriidae", 
-  "Scolopacidae", "Thinocoridae", "Laridae", "Rynchopidae"
+  "Scolopacidae", "Thinocoridae", "Laridae", "Rynchopidae")
+
+### Step 1 - Filter AviList for Waterbird families of interest
+avi_f <- AviList %>% filter(family %in% waterbird_families )
+
+matched_families <- intersect(waterbird_families, unique(AviList$family))
+unmatched_families <- setdiff(waterbird_families, unique(AviList$family))
+cat('Unmatched waterbird families are: ', unmatched_families, "\n", "\n")
+cat('Matched waterbird families are: ', matched_families, "\n")
+
+# total waterbird species in AviList
+unique_sp_avi <- avi_f %>% filter(taxon_rank == "species")
+cat('Number of species = ', nrow(unique_sp_avi), "\n note: this excludes subspecies")
+unique_sub_sp_avi <- avi_f %>% filter(taxon_rank == "subspecies")
+cat("Number of subspecies = ", nrow(unique_sub_sp_avi))
+
+
+```
+
+```{r}
+
+### Step 2 - Filter CBC entries with "sp." -- will not find match to species 
+CBCCounts_f <- CBCCounts %>% filter(!str_detect(SCI_NAME, 'sp.'))
+cat(nrow(CBCCounts) - nrow(CBCCounts_f), " rows removed by filtering out sci names with sp.")
+
+```
+
+```{r}
+
+### Step 3 - Keep CBC entries that have an exact genus species (and maybe subspecies) match with waterbirds avilist  
+# save to new dataframe
+# Note: logic here is to remove the shoe-ins, so that the edge cases can
+# be more easily detected
+
+
+### NOTE TS - see if these are exact matches (is subspecies getting passed?)
+# keep exact match of genus species
+CBC_exact_match <- CBCCounts_f %>% filter(SCI_NAME %in% unique(avi_f$scientific_name))
+cat(nrow(CBC_exact_match), " rows that have exact match with avilist", "\n","\n" )
+
+# remove rows with exact genus species match, and family not in list
+# step a) assign family based on original AviList
+# step b) remove based on filtered AviList
+CBC_leftovers_with_fam <-CBC_exact_match %>% 
+  mutate(family = AviList$family[match(SCI_NAME, AviList$scientific_name)]
+)
+
+CBC_keep_families <- CBC_exact_match_with_fam %>% filter(family %in% waterbird_families)
+
+
+# further investigate edge cases here
+CBCCounts_leftover <- CBCCounts_f %>% filter(!SCI_NAME %in% unique(avi_f$scientific_name))
+cat(nrow(CBCCounts_leftover), "rows without exact match with avilist")
+
+### Step 4 - Investigate edge cases
+# Detect subspecies in Avilist
+# Deal with / cases
+
+
+# remove leftovers of excluded families
+CBCCounts_leftover_with_fam<- CBCCounts_leftover %>% 
+  mutate(family = AviList$family[match(SCI_NAME, AviList$scientific_name)]
 ) 
 
-filtered_avi <- AviList %>% filter(family %in% waterbird_families )
-# check that all have a match
+
+
+## are all leftovers then non-waterbird families?
+## only subspecies aggregation left?
+
+
+### Step 5 - Aggregate subspecies
+
+
+
+
+# another method: 
+# assign keep or remove tag to every CBC entry based on meeting or violating criteria
+# keep - exact genus species match | keep but aggregate with other subspecies
+# remove - includes sp, no species included, 
+# could get hairy, good approach to fact check current one
+
+
+########################################################################
 
 CBCSpecies <- as.data.frame(unique(CBCCounts$SCI_NAME))
 names(CBCSpecies) <- "Species"
@@ -113,13 +205,13 @@ CBCSpecies$FinalName <- apply(CBCSpecies, 1, function (x){
   } else {"NoMatch"}
 })
 
-cat("Number of Matches represents number of CBC Species records that are within the list of families defined by Wauchope", "\n")
+cat("Number of Matches represents number of CBC Species records that are within the list of families defined by Wauchope", "/n")
 cat("**Number of No Matches using AviList = ", nrow(CBCSpecies[CBCSpecies$FinalName == "NoMatch",]), "\n")
 cat("**Number of Matches =",nrow(CBCSpecies[!CBCSpecies$FinalName == "NoMatch",]))
 # so 400 waterbird species are 
 ```
 
-### Original HW Code 
+### Original HW Code
 
 ```{r}
 
@@ -324,3 +416,4 @@ write.csv(CBCCounts, file.path(top_dir, "data", "output", "Wauchope", 'BirdCount
 ### (TS - NOTE --- need to fix bug in CBCEffort2, remove double hours... )
 
 ```
+
