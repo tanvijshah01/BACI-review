@@ -25,7 +25,7 @@ library(plyr)
 library(ncdf4)
 library(pbapply)
 library(maps)
-library(ggalt)
+# library(ggalt)
 library(taxize)
 library(stringr)
 library(rredlist)
@@ -39,38 +39,22 @@ library(dplyr)
 data_filename = '20250723_TanviShah_CBC_Circle_Species_Report.csv'
 effort_filename = '20250723_TanviShah_CBC_Effort_Many_Types_Report.csv'
 
-## delete once upload is complete
-# navigate one folder up
-baci_home_dir <- normalizePath(file.path(getwd(), "..", "..",".."))
-curr_data_path <- file.path(baci_home_dir, 'data')
+# get current directory, make sure project is open 
+baci_home_dir <-here::here()
+# navigate to data directory
+curr_data_path <- file.path(baci_home_dir, 'data~')
 
-```
-
-```{r}
-cat("Current working directory: ", getwd(), "\n")
-cat("Parent directory: ", dirname(getwd()), "\n")
 ```
 
 ```{r}
 
 cbc_data <- read_csv(file.path(curr_data_path, 'raw_data','Wauchope','TanviShah_CBC_Data_Request', data_filename))
 
-
 effort_data <- read_csv(file.path(curr_data_path,'raw_data','Wauchope', 'TanviShah_CBC_Data_Request', effort_filename)) %>% clean_names()
 
 AviList <- read_excel(file.path(curr_data_path,"raw_data", "Wauchope", "AviList-v2025.xlsx")) %>% clean_names()
 
-                      
-
 ```
-
-## Changes from Original (7/14/25)
-
-1\) Use of only one dataset (HW seems to have several)
-
-2\) Removal of SORT_CBC column. Not in current CBC dataset, not used in computations so far
-
-3\) Removal of Taxonomic Filtering Steps. Attempting to gain access to Birdlife data. Currently unsure what all is in DataFP folder referenced by Wauchope. Proceeding without using Taxonomic filtering, if necessary will circle back. Maybe not as necessary for CBC data
 
 ## Initial Clean
 
@@ -94,15 +78,22 @@ CBCCounts$SCI_NAME <- gsub('"', '', as.character(CBCCounts$SCI_NAME))
 
 #### TS approach (CBC data only):
 
-1\) Eliminate messy values (sp, \\, etc)
+1\) Filter AviList for waterbird families of interest (stated in p. 3 of [Wauchope SI](https://static-content.springer.com/esm/art%3A10.1038%2Fs41586-022-04617-0/MediaObjects/41586_2022_4617_MOESM1_ESM.pdf))
 
-2\) Filter AviList for waterbird families of interest (stated in p. 3 of [Wauchope SI](https://static-content.springer.com/esm/art%3A10.1038%2Fs41586-022-04617-0/MediaObjects/41586_2022_4617_MOESM1_ESM.pdf))
+2\) Eliminate entries with "sp."
 
-3\) Compare CBC data to filtered AviList, keep only waterbird records
+3\) Save the exact matches
+
+4\) Filter the edge cases, and save to master list
+
+5\) Aggregate disctinct entries given same genus species (and time, location)
+
+TS - What is OID? maybe agg based on this
 
 ```{r}
-### TS Code - Taxonomic Cleaning CBC # 
 
+# waterbird families of interest
+# directly from p. 3 of Wauchope SI
 waterbird_families <- c(
   "Gaviidae", "Podicipedidae", "Pelecanidae", "Phalacrocoracidae", "Anhingidae",
   "Ardeidae", "Balaenicipitidae", "Scopidae", "Ciconiidae", "Threskiornithidae",
@@ -112,77 +103,100 @@ waterbird_families <- c(
   "Recurvirostridae", "Burhinidae", "Glareolidae", "Charadriidae", 
   "Scolopacidae", "Thinocoridae", "Laridae", "Rynchopidae")
 
-### Step 1 - Filter AviList for Waterbird families of interest
-avi_f <- AviList %>% filter(family %in% waterbird_families )
+# useful for debugging
+alphabetized_waterbird_families <- sort(waterbird_families)
+```
 
-matched_families <- intersect(waterbird_families, unique(AviList$family))
-unmatched_families <- setdiff(waterbird_families, unique(AviList$family))
-cat('Unmatched waterbird families are: ', unmatched_families, "\n", "\n")
-cat('Matched waterbird families are: ', matched_families, "\n")
+Step 1: Filter AviList for Waterbird families of interest
+
+```{r}
+
+avi_f <- AviList %>% filter(family %in% alphabetized_waterbird_families )
+
+matched_families <- intersect(alphabetized_waterbird_families, unique(AviList$family))
+unmatched_families <- setdiff(alphabetized_waterbird_families, unique(AviList$family))
+cat('Unmatched - Waterbird families that do not match between Avilist and CBC: ', unmatched_families, "\n", "\n")
+cat('Matched - Waterbird families in Avilist that match with CBC: ', matched_families, "\n", "\n")
 
 # total waterbird species in AviList
 unique_sp_avi <- avi_f %>% filter(taxon_rank == "species")
-cat('Number of species = ', nrow(unique_sp_avi), "\n note: this excludes subspecies")
+cat('Number of unique species = ', nrow(unique_sp_avi), "\n","\n")
 unique_sub_sp_avi <- avi_f %>% filter(taxon_rank == "subspecies")
-cat("Number of subspecies = ", nrow(unique_sub_sp_avi))
-
+cat("Number of unique subspecies = ", nrow(unique_sub_sp_avi))
 
 ```
 
+Step 2 - Filter out CBC entries with "sp." -- will not find match to species
+
 ```{r}
 
-### Step 2 - Filter CBC entries with "sp." -- will not find match to species 
-CBCCounts_f <- CBCCounts %>% filter(!str_detect(SCI_NAME, 'sp.'))
+CBCCounts_no_sp <- CBCCounts %>% filter(!str_detect(SCI_NAME, 'sp.'))
 cat(nrow(CBCCounts) - nrow(CBCCounts_f), " rows removed by filtering out sci names with sp.")
-
 ```
+
+Step 3 - Keep CBC entries that have an exact genus species (or subspecies) match with waterbirds avilist
 
 ```{r}
 
-### Step 3 - Keep CBC entries that have an exact genus species (and maybe subspecies) match with waterbirds avilist  
-# save to new dataframe
-# Note: logic here is to remove the shoe-ins, so that the edge cases can
-# be more easily detected
+# save rows with sci name that matches avilist entries exactly 
+# of the form: "genus species" and "genus species subspecies"
+CBC_exact_match <- CBCCounts_no_sp %>% filter(SCI_NAME %in% unique(avi_f$scientific_name))
+```
+
+Step 4 - Deal with edge cases,
+
+```{r}
+
+# Start with set exluded from prior step 
+# Everything that doesn't fall under form: genus species and genus species subspecies
+# This includes...
+  # genus speciesA/speciesB --> exclude
+  # genus species subspeciesA/subspeciesB --> include, merge counts under "genus species"
+  # genus species [subspecies group] --> include, merge counts under "genus species"
+
+# Separate genus, species, and subspecies
+CBC_edge_cases <- CBCCounts_no_sp %>% filter(!SCI_NAME %in% unique(avi_f$scientific_name)) %>% 
+  separate(SCI_NAME, into = c("Genus", "Species", "Subspecies"), 
+           sep = " ", fill = "right", extra = "drop", remove = FALSE)
+
+# remove indeterminate species (containing slash in species)
+CBC_edge_no_ind_species <- CBC_edge_cases %>%  filter(!str_detect(Species, "/"))
+
+# rename indeterminate subspecies to simply "genus species"
+# note: this is not very necessary, could also just merge later based on only the first # two words (genus, species)
+CBC_edge_filtered <- CBC_edge_no_ind_species %>% mutate(SCI_NAME = str_c(word(SCI_NAME, 1), word(SCI_NAME, 2), sep = " "))
 
 
-### NOTE TS - see if these are exact matches (is subspecies getting passed?)
-# keep exact match of genus species
-CBC_exact_match <- CBCCounts_f %>% filter(SCI_NAME %in% unique(avi_f$scientific_name))
-cat(nrow(CBC_exact_match), " rows that have exact match with avilist", "\n","\n" )
-
-# remove rows with exact genus species match, and family not in list
-# step a) assign family based on original AviList
-# step b) remove based on filtered AviList
-CBC_leftovers_with_fam <-CBC_exact_match %>% 
-  mutate(family = AviList$family[match(SCI_NAME, AviList$scientific_name)]
-)
-
-CBC_keep_families <- CBC_exact_match_with_fam %>% filter(family %in% waterbird_families)
+# change exact matches sci name to just genus species
+CBC_exact_match_mod <-CBC_exact_match  %>% 
+  mutate(SCI_NAME = str_c(word(SCI_NAME, 1), word(SCI_NAME, 2), sep = " "))
 
 
-# further investigate edge cases here
-CBCCounts_leftover <- CBCCounts_f %>% filter(!SCI_NAME %in% unique(avi_f$scientific_name))
-cat(nrow(CBCCounts_leftover), "rows without exact match with avilist")
+CBC_total_match <- bind_rows(CBC_exact_match_mod, CBC_edge_filtered) %>% arrange(SCI_NAME)
+```
 
-### Step 4 - Investigate edge cases
-# Detect subspecies in Avilist
-# Deal with / cases
+Step 5 - aggregate entries with same genus, species, date, location (subspecies should be counted under parent genus, species)
 
+```{r}
 
-# remove leftovers of excluded families
-CBCCounts_leftover_with_fam<- CBCCounts_leftover %>% 
-  mutate(family = AviList$family[match(SCI_NAME, AviList$scientific_name)]
-) 
+# waterbirds CBC - 100, 200
 
+# 
+# avi_fsp <- avi_f %>% filter(!speciesfamily)
 
-
-## are all leftovers then non-waterbird families?
-## only subspecies aggregation left?
+# aggregate
+CBC_aggregated <- CBC_total_match %>%
+  group_by(Abbrev, Count_yr, SCI_NAME) %>%
+  dplyr::summarise(total_count = sum(how_many, na.rm = TRUE))
 
 
-### Step 5 - Aggregate subspecies
+names(CBC_total_match)       # make sure "how_many" exists
+sum(is.na(CBC_total_match$how_many))  # check how many NAs
+```
 
+Step 4
 
+```{r}
 
 
 # another method: 
@@ -288,8 +302,6 @@ names(CBCEffort) <- c("OID", "Abbrev", "Name", "Count_yr", "Country_code", "Desc
 
 
 
-#####  HW- Original code  ############
-
 # Effort1_116 <- fread(paste0(DataFP, "WaterbirdData_2020/CBC/RawData/1-116-all-CBC_Effort_Report_2.csv"))
 # names(Effort1_116) <- c("Abbrev", "Name", "Count_yr", "Country_code", "Distance", "Hours")
 # Effort117_118 <- fread(paste0(DataFP, "WaterbirdData_2020/CBC/RawData/117-118-CBC_Effort_Report_SQL_updated-2.csv"))
@@ -297,13 +309,13 @@ names(CBCEffort) <- c("OID", "Abbrev", "Name", "Count_yr", "Country_code", "Desc
 # CBCEffort <- rbind(Effort1_116, Effort117_118, fill=TRUE)
 ###
 
-#Distance and hours are correlated
+#Distance and hours are correlated - convert to numeric, remove NA's
 CBCEffort$Distance <- as.numeric(CBCEffort$Distance)
 CBCEffort$Hours <- as.numeric(CBCEffort$Hours)
 CBCEffort <- CBCEffort[complete.cases(CBCEffort$Hours),]
 CBCEffort <- CBCEffort[complete.cases(CBCEffort$Distance),]
 
-### (Q) not sure what this  is doing... ##############################
+# Quick Bootstrap simulation for visualization
 CBCEffortThou <- CBCEffort[sample(1:nrow(CBCEffort), 1000, replace=TRUE),]
 plot(CBCEffortThou$Hours, CBCEffortThou$Distance)
 
@@ -313,28 +325,36 @@ CBCEffort[,c("Distance", "Units", "Method", "Name", "Country_code")] <- NULL
 CBCEffort2 <- subset(CBCEffort, Hours!=0)
 
 
-########## (Q) Getting an error here - need to understand what this sum is doing...
+
 #Now combine hours
+
+# ------------ HW approaches ----------- delete
 # keys <- colnames(CBCEffort)[!colnames(CBCEffort) %in% "Hours"]
 
-# keys <- setdiff(colnames(CBCEffort), "Hours")
-# CBCEffort2 <- CBCEffort %>% 
-#   group_by(across(all_of(keys))) %>%
-#   summarise(Hours = sum(Hours, na.rm= TRUE))
+ # keys <- setdiff(colnames(CBCEffort), "Hours")
+ # CBCEffort2 <- CBCEffort %>%
+ #   group_by(across(all_of(keys))) %>%
+ #   summarise(Hours = sum(Hours, na.rm= TRUE))
+
+  # CBCEffort2 <- CBCEffort %>%
+ #   group_by(across(-Hours)) %>%
+ #   summarise(
+ #     Hours = sum(Hours, na.rm = TRUE),
+ #     OID = first(OID),
+ #     Abbrev = first(Abbrev),
+ #     Count_yr = first(Count_yr),
+ #     Description = first(Description),
+ #     Distance_unit = first(Distance_unit),
+ #     Hours = first(Hours)
+ #   )
+ # -------------------------------------------
+
+ CBCEffort2 <- CBCEffort %>%
+  group_by(across(-Hours)) %>%
+  summarise(Hours = sum(Hours, na.rm = TRUE), .groups = "drop")
 
 
-# CBCEffort2 <- CBCEffort %>%
-#   group_by(across(-Hours)) %>%
-#   summarise(
-#     Hours = sum(Hours, na.rm = TRUE),
-#     OID = first(OID),
-#     Abbrev = first(Abbrev),
-#     Count_yr = first(Count_yr),
-#     Description = first(Description),
-#     Distance_unit = first(Distance_unit),
-#     Hours = first(Hours)
-#   )
-  
+
 
 Check <- dcast(CBCEffort2, Abbrev + Count_yr~., length, value.var="Hours")
 if(max(unique(Check$.))!=1){stop("There are still cases of double hours!")}
@@ -361,11 +381,11 @@ CBCCounts[is.na(CBCCounts$Day),]$Day <- 0
 
 CBCCounts[,c("Count_yr", "Cnt_dt")] <- NULL
 
-# #Now sort out double counts (sum by days counted, then mean by year)
-# CBCCounts$SiteSpecYear <- paste0(CBCCounts$Abbrev, "_", CBCCounts$Species, "_", CBCCounts$Year)
+#Now sort out double counts (sum by days counted, then mean by year)
+CBCCounts$SiteSpecYear <- paste0(CBCCounts$Abbrev, "_", CBCCounts$Species, "_", CBCCounts$Year)
 # CBCCountsNoHybrids <- subset(CBCCounts, HybridFlag==0)
-# 
-# #Sum by date
+
+#Sum by date
 # # NOTE: removing SORT_CBC column compared to original, because doesn't exist in this dataset
 # 
 # # (Q) - What are hybrids? there's no hybrid flag...
@@ -390,9 +410,9 @@ CBCCounts[,c("Count_yr", "Cnt_dt")] <- NULL
 # # NOTE: removing SORT_CBC column compared to original, because doesn't exist in this dataset
 # CBCCountsHybrids[,c("COM_NAME", "GivenSpecies", "Editor_comment", "TotalSpecies", "Month", "Day", "how_many")] <- NULL
 # CBCCountsHybrids$Count <- NA
-# 
+
 # CBCCounts <- rbind(CBCCountsHybrids, CBCCountsNoHybrids3)
-# CBCCounts[,c("SiteSpecYear", "SiteYear")] <- NULL
+CBCCounts[,c("SiteSpecYear", "SiteYear")] <- NULL
 
 #Remove multiple sites at the site coordinate:
 CBCCounts$Latitude <- round(CBCCounts$Latitude, 4)
@@ -409,11 +429,8 @@ CBCCounts$Coordinates <- NULL
 
 # write.csv(CBCCounts, paste0(DataFP, "WaterbirdData_2020/CBC/CBCCounts_SpeciesEffortCleaned.csv"), row.names=FALSE)
 
-write.csv(CBCCounts, file.path(top_dir, "data", "output", "Wauchope", 'BirdCounts.csv'), row.names = FALSE)
+write.csv(CBCCounts, file.path(baci_home_dir, "data~", "output", "Wauchope", 'BirdCounts.csv'), row.names = FALSE)
 
 
-
-### (TS - NOTE --- need to fix bug in CBCEffort2, remove double hours... )
 
 ```
-
