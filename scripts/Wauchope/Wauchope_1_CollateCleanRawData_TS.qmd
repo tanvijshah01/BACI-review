@@ -25,7 +25,7 @@ library(plyr)
 library(ncdf4)
 library(pbapply)
 library(maps)
-# library(ggalt)
+# library(ggalt) - no longer exists
 library(taxize)
 library(stringr)
 library(rredlist)
@@ -42,7 +42,7 @@ effort_filename = '20250723_TanviShah_CBC_Effort_Many_Types_Report.csv'
 # get current directory, make sure project is open 
 baci_home_dir <-here::here()
 # navigate to data directory
-curr_data_path <- file.path(baci_home_dir, 'data~')
+curr_data_path <- file.path(baci_home_dir, 'data')
 
 ```
 
@@ -86,9 +86,7 @@ CBCCounts$SCI_NAME <- gsub('"', '', as.character(CBCCounts$SCI_NAME))
 
 4\) Filter the edge cases, and save to master list
 
-5\) Aggregate disctinct entries given same genus species (and time, location)
-
-TS - What is OID? maybe agg based on this
+5\) Aggregate distinct entries given same genus species (and time, location)
 
 ```{r}
 
@@ -120,9 +118,9 @@ cat('Matched - Waterbird families in Avilist that match with CBC: ', matched_fam
 
 # total waterbird species in AviList
 unique_sp_avi <- avi_f %>% filter(taxon_rank == "species")
-cat('Number of unique species = ', nrow(unique_sp_avi), "\n","\n")
+cat('Number of unique species in AviList = ', nrow(unique_sp_avi), "\n","\n")
 unique_sub_sp_avi <- avi_f %>% filter(taxon_rank == "subspecies")
-cat("Number of unique subspecies = ", nrow(unique_sub_sp_avi))
+cat("Number of unique subspecies in AviList = ", nrow(unique_sub_sp_avi))
 
 ```
 
@@ -131,7 +129,7 @@ Step 2 - Filter out CBC entries with "sp." -- will not find match to species
 ```{r}
 
 CBCCounts_no_sp <- CBCCounts %>% filter(!str_detect(SCI_NAME, 'sp.'))
-cat(nrow(CBCCounts) - nrow(CBCCounts_f), " rows removed by filtering out sci names with sp.")
+cat(nrow(CBCCounts) - nrow(CBCCounts_no_sp), " rows removed by filtering out sci names with sp.")
 ```
 
 Step 3 - Keep CBC entries that have an exact genus species (or subspecies) match with waterbirds avilist
@@ -143,7 +141,7 @@ Step 3 - Keep CBC entries that have an exact genus species (or subspecies) match
 CBC_exact_match <- CBCCounts_no_sp %>% filter(SCI_NAME %in% unique(avi_f$scientific_name))
 ```
 
-Step 4 - Deal with edge cases,
+Step 4 - Deal with edge cases
 
 ```{r}
 
@@ -151,8 +149,8 @@ Step 4 - Deal with edge cases,
 # Everything that doesn't fall under form: genus species and genus species subspecies
 # This includes...
   # genus speciesA/speciesB --> exclude
-  # genus species subspeciesA/subspeciesB --> include, merge counts under "genus species"
-  # genus species [subspecies group] --> include, merge counts under "genus species"
+  # genus species subspeciesA/subspeciesB --> include, later merge counts under "genus species"
+  # genus species [subspecies group] --> include, later merge counts under "genus species"
 
 # Separate genus, species, and subspecies
 CBC_edge_cases <- CBCCounts_no_sp %>% filter(!SCI_NAME %in% unique(avi_f$scientific_name)) %>% 
@@ -181,17 +179,23 @@ Step 5 - aggregate entries with same genus, species, date, location (subspecies 
 
 # waterbirds CBC - 100, 200
 
-# 
-# avi_fsp <- avi_f %>% filter(!speciesfamily)
+# Sanity check - number of unique species in Avilist
+# counting number of unique scientific names
+avi_f_sp <- avi_f %>% filter(taxon_rank == "species")
+ct_avi_sp <- length(unique(avi_f_sp$scientific_name))
+cat("number of unique scientific names in AviList = ", ct_avi_sp, "\n","\n" )
 
-# aggregate
+# count number of unique waterbird species in CBC data
+CBC_total_match_sp <- unique(CBC_total_match$SCI_NAME)
+ct_CBC_sp <- length(unique(CBC_total_match$SCI_NAME))
+cat("number of unique scientific names in CBC waterbirds= ", ct_CBC_sp)
+
+
+# aggregate based on Site and Year
 CBC_aggregated <- CBC_total_match %>%
   group_by(Abbrev, Count_yr, SCI_NAME) %>%
   dplyr::summarise(total_count = sum(how_many, na.rm = TRUE))
 
-
-names(CBC_total_match)       # make sure "how_many" exists
-sum(is.na(CBC_total_match$how_many))  # check how many NAs
 ```
 
 Step 4
