@@ -132,16 +132,24 @@ CBCCounts_no_sp <- CBCCounts %>% filter(!str_detect(SCI_NAME, 'sp.'))
 cat(nrow(CBCCounts) - nrow(CBCCounts_no_sp), " rows removed by filtering out sci names with sp.")
 ```
 
-Step 3 - Keep CBC entries that have an exact genus species (or subspecies) match with waterbirds avilist
+Step 3 - Keep CBC entries that have an exact genus species (or subspecies) match with waterbirds Avilist
 
 ```{r}
-
-# save rows with sci name that matches avilist entries exactly 
-# of the form: "genus species" and "genus species subspecies"
+# 
+# # save rows with sci name that match Avilist entries exactly 
+# # of the form: "genus species" and "genus species subspecies"
 CBC_exact_match <- CBCCounts_no_sp %>% filter(SCI_NAME %in% unique(avi_f$scientific_name))
+# 
+# # add family (waterbird) to CBC_exact_match dataset
+CBC_exact_match$family <- avi_f$family[match(CBC_exact_match$SCI_NAME, avi_f$scientific_name)]
+
+# number of unique species in CBC exact match
+num_unique_sp_CBC <- length(unique(CBC_exact_match$SCI_NAME)) 
+cat("Number of unique species in CBC exact match with AviList = ", num_unique_sp_CBC)
+
 ```
 
-Step 4 - Deal with edge cases
+Step 4 - Deal with subspecies cases
 
 ```{r}
 
@@ -152,43 +160,51 @@ Step 4 - Deal with edge cases
   # genus species subspeciesA/subspeciesB --> include, later merge counts under "genus species"
   # genus species [subspecies group] --> include, later merge counts under "genus species"
 
-# Separate genus, species, and subspecies
-CBC_edge_cases <- CBCCounts_no_sp %>% filter(!SCI_NAME %in% unique(avi_f$scientific_name)) %>% 
+# STEP 4A: 
+# ... Start with excluded set
+# ... Then separate genus, species, and subspecies
+CBC_sub_sp_cases <- CBCCounts_no_sp %>% filter(!SCI_NAME %in% unique(avi_f$scientific_name)) %>% 
   separate(SCI_NAME, into = c("Genus", "Species", "Subspecies"), 
            sep = " ", fill = "right", extra = "drop", remove = FALSE)
 
-# remove indeterminate species (containing slash in species)
-CBC_edge_no_ind_species <- CBC_edge_cases %>%  filter(!str_detect(Species, "/"))
+# STEP 4B:
+# ... Remove indeterminate species (containing slash in species)
+CBC_sub_sp_clean <- CBC_sub_sp_cases %>%  filter(!str_detect(Species, "/"))
 
-# rename indeterminate subspecies to simply "genus species"
-# note: this is not very necessary, could also just merge later based on only the first # two words (genus, species)
-CBC_edge_filtered <- CBC_edge_no_ind_species %>% mutate(SCI_NAME = str_c(word(SCI_NAME, 1), word(SCI_NAME, 2), sep = " "))
+# STEP 4C:
+# ... Rename indeterminate subspecies to simply "genus species"
+CBC_sub_sp_filtered <- CBC_sub_sp_clean %>% mutate(SCI_NAME = str_c(word(SCI_NAME, 1), word(SCI_NAME, 2), sep = " "))
 
 
-# change exact matches sci name to just genus species
+# Step 4D: 
+# ... Select records of waterbirds from CBC edge cases
+CBC_sub_sp_waterbird <- CBC_sub_sp_filtered %>% filter(SCI_NAME %in% unique(avi_f$scientific_name))
+num_waterbird_sub_sp_cases <- length(unique(CBC_sub_sp_waterbird$SCI_NAME))
+cat("Number of CBC subspecies records that are waterbirds = ", num_waterbird_sub_sp_cases, "\n","\n")
+
+# STEP 4E:
+# ... Change exact matches sci name to just "genus species"
+# ... Reasoning: avi list includes some subspecies, so some CBC exact matches have
+# ... subspecies. Ultimately want to merge counts based on genus species only
 CBC_exact_match_mod <-CBC_exact_match  %>% 
   mutate(SCI_NAME = str_c(word(SCI_NAME, 1), word(SCI_NAME, 2), sep = " "))
 
+# STEP 4F: 
+# ... merge exact matches and edge cases 
+CBC_total_match <- bind_rows(CBC_exact_match_mod, CBC_sub_sp_waterbird) %>% arrange(SCI_NAME)
 
-CBC_total_match <- bind_rows(CBC_exact_match_mod, CBC_edge_filtered) %>% arrange(SCI_NAME)
+num_total_CBC_waterbirds <- length(unique(CBC_total_match$SCI_NAME))
+cat("Total number of CBC entries that are waterbirds = ", num_total_CBC_waterbirds, "\n","\n" )
+
 ```
 
 Step 5 - aggregate entries with same genus, species, date, location (subspecies should be counted under parent genus, species)
 
 ```{r}
 
-# waterbirds CBC - 100, 200
-
-# Sanity check - number of unique species in Avilist
-# counting number of unique scientific names
-avi_f_sp <- avi_f %>% filter(taxon_rank == "species")
-ct_avi_sp <- length(unique(avi_f_sp$scientific_name))
-cat("number of unique scientific names in AviList = ", ct_avi_sp, "\n","\n" )
-
-# count number of unique waterbird species in CBC data
-CBC_total_match_sp <- unique(CBC_total_match$SCI_NAME)
-ct_CBC_sp <- length(unique(CBC_total_match$SCI_NAME))
-cat("number of unique scientific names in CBC waterbirds= ", ct_CBC_sp)
+CBC_unique_species <- CBC_total_match %>%
+  select(SCI_NAME, FAMILY) %>%           # Keep only these two columns
+  distinct(SCI_NAME, .keep_all = TRUE)   # Remove duplicate SCI_NAMEs
 
 
 # aggregate based on Site and Year
@@ -196,37 +212,6 @@ CBC_aggregated <- CBC_total_match %>%
   group_by(Abbrev, Count_yr, SCI_NAME) %>%
   dplyr::summarise(total_count = sum(how_many, na.rm = TRUE))
 
-```
-
-Step 4
-
-```{r}
-
-
-# another method: 
-# assign keep or remove tag to every CBC entry based on meeting or violating criteria
-# keep - exact genus species match | keep but aggregate with other subspecies
-# remove - includes sp, no species included, 
-# could get hairy, good approach to fact check current one
-
-
-########################################################################
-
-CBCSpecies <- as.data.frame(unique(CBCCounts$SCI_NAME))
-names(CBCSpecies) <- "Species"
-### combine synonyms here?
-## check how many real species are in CBC data
-
-CBCSpecies$FinalName <- apply(CBCSpecies, 1, function (x){
-  if(x["Species"] %in% filtered_avi$scientific_name){
-    x["Species"]
-  } else {"NoMatch"}
-})
-
-cat("Number of Matches represents number of CBC Species records that are within the list of families defined by Wauchope", "/n")
-cat("**Number of No Matches using AviList = ", nrow(CBCSpecies[CBCSpecies$FinalName == "NoMatch",]), "\n")
-cat("**Number of Matches =",nrow(CBCSpecies[!CBCSpecies$FinalName == "NoMatch",]))
-# so 400 waterbird species are 
 ```
 
 ### Original HW Code
