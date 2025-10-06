@@ -19,7 +19,7 @@ Takes the data cleaned in Script 1 and extracts site and species specific covari
 # library(rgdal) - no longer exists
 # library(rgeos) - no longer exists
   library(ncdf4)
-  library(chron)
+  # library(chron) - no longer exists
   library(raster)
   library(rlist)
   library(stringr)
@@ -32,10 +32,13 @@ Takes the data cleaned in Script 1 and extracts site and species specific covari
 Define Data Directory
 
 ```{r}
-# navigate two folders up
-top_dir <- normalizePath(file.path(getwd(), "..", ".."))
 
-birdcounts <- read_csv(file.path(top_dir, "data", "output", "Wauchope", 'BirdCounts.csv'))
+# get current directory, make sure project is open 
+baci_home_dir <-here::here()
+# navigate to data directory
+curr_data_path <- file.path(baci_home_dir, 'data')
+
+birdcounts <- read_csv(file.path(curr_data_path, "output", "Wauchope", 'BirdCounts.csv'))
 
 ```
 

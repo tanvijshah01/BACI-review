@@ -44,15 +44,13 @@ baci_home_dir <-here::here()
 # navigate to data directory
 curr_data_path <- file.path(baci_home_dir, 'data')
 
-```
-
-```{r}
 
 cbc_data <- read_csv(file.path(curr_data_path, 'raw_data','Wauchope','TanviShah_CBC_Data_Request', data_filename))
 
 effort_data <- read_csv(file.path(curr_data_path,'raw_data','Wauchope', 'TanviShah_CBC_Data_Request', effort_filename)) %>% clean_names()
 
 AviList <- read_excel(file.path(curr_data_path,"raw_data", "Wauchope", "AviList-v2025.xlsx")) %>% clean_names()
+
 
 ```
 
@@ -103,6 +101,25 @@ waterbird_families <- c(
 
 # useful for debugging
 alphabetized_waterbird_families <- sort(waterbird_families)
+```
+
+Step 0: Separate hybrid entries
+
+```{r}
+# want to save hybrids for imputation step
+# enter 0 for years with no observation
+# skip years where no observation besides hybrid
+
+hybrids <- CBCCounts %>% filter(str_detect(SCI_NAME, " x "))
+# separate hybrid names into two 
+
+split_hybrids <- hybrids %>%
+  separate(SCI_NAME, into = c("Hybrid1", "Hybrid2"), sep = " x ", fill = "right", remove = FALSE)
+
+split_hybrids
+# filter out non-waterbirds
+
+
 ```
 
 Step 1: Filter AviList for Waterbird families of interest
@@ -191,7 +208,7 @@ CBC_exact_match_mod <-CBC_exact_match  %>%
 
 # STEP 4F: 
 # ... merge exact matches and edge cases 
-CBC_total_match <- bind_rows(CBC_exact_match_mod, CBC_sub_sp_waterbird) %>% arrange(SCI_NAME)
+CBC_total_match <- (bind_rows(CBC_exact_match_mod, CBC_sub_sp_waterbird) %>% arrange(SCI_NAME))
 
 num_total_CBC_waterbirds <- length(unique(CBC_total_match$SCI_NAME))
 cat("Total number of CBC entries that are waterbirds = ", num_total_CBC_waterbirds, "\n","\n" )
@@ -203,82 +220,72 @@ Step 5 - aggregate entries with same genus, species, date, location (subspecies 
 ```{r}
 
 CBC_unique_species <- CBC_total_match %>%
-  select(SCI_NAME, FAMILY) %>%           # Keep only these two columns
+  dplyr::select(SCI_NAME, COM_NAME, family) %>%           # Keep only these two columns
   distinct(SCI_NAME, .keep_all = TRUE)   # Remove duplicate SCI_NAMEs
 
 
 # aggregate based on Site and Year
 CBC_aggregated <- CBC_total_match %>%
-  group_by(Abbrev, Count_yr, SCI_NAME) %>%
+  group_by(Abbrev, Count_yr, SCI_NAME, Latitude, Longitude) %>%
   dplyr::summarise(total_count = sum(how_many, na.rm = TRUE))
 
+CBC_aggregated <- CBC_aggregated %>% mutate(HybridFlag = 0)
 ```
 
-### Original HW Code
+Handle Hybrids
 
 ```{r}
 
-# #### Original HW Code -- Taxonomic Cleaning CBC ####
-# 
-# CBCSpecies <- as.data.frame(unique(CBCCounts$SCI_NAME))
-# names(CBCSpecies) <- "Species"
-# 
-# # (Q) Unsure where BOTWNames comes from --- "Birds of the World"?
+# filter for waterbird hybrids by splitting hybrid name and checking both against avi list
+hybrids_keep <- split_hybrids %>% filter(Hybrid1 %in% unique(avi_f$scientific_name) | Hybrid2 %in% unique(avi_f$scientific_name))
 
-# 
-# CBCNoMatch <- subset(CBCSpecies, FinalName=="NoMatch")
-# 
-# #TreeofLifeID <- pbmclapply(CBCNoMatch$Species, function (x) tryCatch(as.data.frame(get_tolid_(as.character(x))), error=function(e){"NoMatch"}), mc.cores=8)
-# #names(TreeofLifeID) <- CBCNoMatch$Species
-# #save(TreeofLifeID, file=paste0(DataFP, "WaterbirdData_2020/CBC/TreeofLifeID.RData"))
-# #load(file=paste0(DataFP, "WaterbirdData_2020/CBC/TreeofLifeID.RData"))
-# 
-# SpeciesSynonyms <- TreeofLifeCleaning(TreeofLifeID, CBCNoMatch)
-# write.csv(subset(SpeciesSynonyms, FinalName=="NoMatch"), paste0(DataFP, "WaterbirdData_2020/CBC/Cleaning/NoMatchSpecies.csv"), row.names=FALSE)
-# 
-# #Load up cleaned species
-# NameUpdates <- read.csv(paste0(DataFP, "WaterbirdData_2020/CBC/Cleaning/NoMatchSpeciesResearchedCBC.csv"))
-# 
-# CBCTaxonCleaned <- PostUpdateTaxonCleaning(NameUpdates, SpeciesSynonyms)
-# 
-# #Now add back into the CBC that was cleaned to begin with:
-# names(CBCSpecies) <- c("GivenSpecies", "Species")
-# 
-# CBCTaxonCleaned <- rbind(subset(CBCSpecies, Species!="NoMatch"), CBCTaxonCleaned, fill=TRUE)
-# if(nrow(CBCTaxonCleaned)!=nrow(CBCSpecies)){stop("Somethings gone wrong with synonym matching!")}
-# CBCTaxonCleaned[is.na(CBCTaxonCleaned$HybridFlag)]$HybridFlag <- 0
-# 
-# #Add in higher order taxonomy
-# GetSISID <- merge(CBCTaxonCleaned, unique(BOTWNames[,c("SCINAME", "SISRecID")]), by.x="Species", by.y="SCINAME", all.x=TRUE)
-# if(nrow(GetSISID) != nrow(CBCTaxonCleaned)){stop("Matching issue!")}
-# if(nrow(GetSISID[!is.na(GetSISID$SISRecID),]) != nrow(subset(CBCTaxonCleaned, HybridFlag==0))){stop("Matching issue!")}
-# 
-# GetSISID2 <- as.data.frame(merge(GetSISID, Tax, by=c("SISRecID", "Species"), all.x=TRUE))
-# if(nrow(GetSISID2) != nrow(CBCTaxonCleaned)){stop("Matching issue!")}
-# if(nrow(GetSISID2[!is.na(GetSISID2$SISRecID),]) != nrow(subset(CBCTaxonCleaned, HybridFlag==0))){stop("Matching issue!")}
-# 
-# GetSISID2$Genus <- NA
-# GetSISID2[GetSISID2$HybridFlag==0,]$Genus <- str_split_fixed(GetSISID2[GetSISID2$HybridFlag==0,]$Species, "[ ]", 2)[,1]
-# 
-# ###Higher order matching check###
-# HybridGenus <- unique(subset(GetSISID2, HybridLevel=="Genus")$HybridValue)
-# HybridGenus <- HybridGenus[!HybridGenus %in% unique(Tax$Genus)]
-# 
-# HybridFamily <- unique(subset(GetSISID2, HybridLevel=="Family")$HybridValue)
-# HybridFamily <- HybridFamily[!HybridFamily %in% unique(Tax$Family)]
-# 
-# HybridOrder <- unique(subset(GetSISID2, HybridLevel=="Order")$HybridValue)
-# HybridOrder <- HybridOrder[!HybridOrder %in% unique(Tax$Order)]
-# 
-# #Add back to count data
-# CBCCounts2 <- merge(GetSISID2, CBCCounts, by.x="GivenSpecies", by.y="SCI_NAME", all=T)
-# if(nrow(CBCCounts2)!=nrow(CBCCounts)){stop("Something's gone wrong!")}
-# write.csv(CBCCounts2, paste0(DataFP, "WaterbirdData_2020/CBC/CBCCounts_SpeciesCleaned.csv"), row.names = FALSE)
-# 
-# #### CBC Effort Cleaning + Double Counts ####
-# #Read in count data
-# CBCCounts <- fread(paste0(DataFP, "WaterbirdData_2020/CBC/CBCCounts_SpeciesCleaned.csv"))
+# aggregate filtered hybrid entries by site, year, and name
+hybrids_aggregated <- hybrids_keep %>%
+  group_by(Abbrev, Count_yr, SCI_NAME) %>%
+  dplyr::summarise(total_count = sum(how_many, na.rm = TRUE))
 
+hybrids_aggregated <- hybrids_aggregated %>% mutate(HybridFlag = 1)
+
+# add hybrids back into full dataset 
+# create "hybrid flag" to keep track of hybrids and non-hybrids (remove hybrids for analysis)
+
+BirdCounts <- rbind(CBC_aggregated, hybrids_aggregated)
+```
+
+## Zero Impute
+
+```{# {r}
+# 
+# DataFP <- curr_data_path
+# 
+# BirdCountsZeroImpute <- rbindlist(pbmclapply(unique(BirdCounts$SiteCode), function(x){
+#   SiteCounts <- subset(BirdCounts, SiteCode==x & HybridFlag==0)
+#   SiteCounts$ImputeFlag <- 0
+#   SiteYears <- unique(SiteCounts$Year)
+#   SiteSpecies <- unique(SiteCounts$Species)
+#   SiteHybrids <- subset(BirdCounts, SiteCode==x & HybridFlag==1)
+#   SiteHybridsSpecies <- unique(SiteHybrids[,c("HybridLevel", "HybridValue", "Year")])
+#   ZeroesSiteSpecies <- rbindlist(lapply(SiteSpecies, function(y){
+#     SiteSpeciesCounts <- subset(SiteCounts, HybridFlag==0 & Species==y)
+#     HybridMatch <- SiteHybridsSpecies[SiteHybridsSpecies$HybridValue %in% c(unique(SiteSpeciesCounts$Genus), unique(SiteSpeciesCounts$Family), unique(SiteSpeciesCounts$Order), unique(SiteSpeciesCounts$Class))]
+#     ZeroYears <- SiteYears[!SiteYears %in% unique(c(SiteSpeciesCounts$Year, HybridMatch$Year))]
+#     ZeroCounts <- do.call("rbind", replicate(length(ZeroYears), SiteSpeciesCounts[1,], simplify = FALSE))
+#     if(is.null(ZeroCounts)){
+#       return(SiteSpeciesCounts)
+#     }
+#     ZeroCounts$Count <- 0
+#     ZeroCounts$Year <- ZeroYears
+#     ZeroCounts$ImputeFlag <- 1
+#     SiteSpeciesCounts <- rbind(SiteSpeciesCounts, ZeroCounts)
+#     return(SiteSpeciesCounts)
+#   }))
+#   write.csv(ZeroesSiteSpecies, paste0(DataFP, "WaterbirdData_2020/ZeroImputedSites/Site", x, ".csv"), row.names=FALSE)
+#   return(ZeroesSiteSpecies)
+# }, mc.cores=6))
+# 
+# #Some sites are lost, but only those without any counted species (either only hybrids, or only negative obs)
+# BirdCountsZeroImpute <- rbindlist(pblapply(list.files(path=paste0(DataFP, "WaterbirdData_2020/ZeroImputedSites/"), pattern="*.csv", full.names = TRUE), function(x) fread(x)), fill=TRUE)
+# BirdCountsZeroImpute[,c("HybridFlag", "HybridLevel", "HybridValue")] <- NULL
 ```
 
 ## Get Effort
@@ -288,15 +295,6 @@ CBC_aggregated <- CBC_total_match %>%
 #Get Effort
 CBCEffort <- effort_data
 names(CBCEffort) <- c("OID", "Abbrev", "Name", "Count_yr", "Country_code", "Description", "Distance","Distance_unit", "Hours")
-
-
-
-# Effort1_116 <- fread(paste0(DataFP, "WaterbirdData_2020/CBC/RawData/1-116-all-CBC_Effort_Report_2.csv"))
-# names(Effort1_116) <- c("Abbrev", "Name", "Count_yr", "Country_code", "Distance", "Hours")
-# Effort117_118 <- fread(paste0(DataFP, "WaterbirdData_2020/CBC/RawData/117-118-CBC_Effort_Report_SQL_updated-2.csv"))
-# names(Effort117_118) <- c("Abbrev", "Name", "Count_yr", "Country_code", "Method", "Distance", "Units", "Hours")
-# CBCEffort <- rbind(Effort1_116, Effort117_118, fill=TRUE)
-###
 
 #Distance and hours are correlated - convert to numeric, remove NA's
 CBCEffort$Distance <- as.numeric(CBCEffort$Distance)
@@ -308,99 +306,49 @@ CBCEffort <- CBCEffort[complete.cases(CBCEffort$Distance),]
 CBCEffortThou <- CBCEffort[sample(1:nrow(CBCEffort), 1000, replace=TRUE),]
 plot(CBCEffortThou$Hours, CBCEffortThou$Distance)
 
-
 #Remove distance and zero count hours
 CBCEffort[,c("Distance", "Units", "Method", "Name", "Country_code")] <- NULL
 CBCEffort2 <- subset(CBCEffort, Hours!=0)
 
 
-
-#Now combine hours
-
-# ------------ HW approaches ----------- delete
-# keys <- colnames(CBCEffort)[!colnames(CBCEffort) %in% "Hours"]
-
- # keys <- setdiff(colnames(CBCEffort), "Hours")
- # CBCEffort2 <- CBCEffort %>%
- #   group_by(across(all_of(keys))) %>%
- #   summarise(Hours = sum(Hours, na.rm= TRUE))
-
-  # CBCEffort2 <- CBCEffort %>%
- #   group_by(across(-Hours)) %>%
- #   summarise(
- #     Hours = sum(Hours, na.rm = TRUE),
- #     OID = first(OID),
- #     Abbrev = first(Abbrev),
- #     Count_yr = first(Count_yr),
- #     Description = first(Description),
- #     Distance_unit = first(Distance_unit),
- #     Hours = first(Hours)
- #   )
- # -------------------------------------------
-
  CBCEffort2 <- CBCEffort %>%
-  group_by(across(-Hours)) %>%
-  summarise(Hours = sum(Hours, na.rm = TRUE), .groups = "drop")
-
-
-
+   dplyr::group_by(Abbrev, Count_yr) %>%
+   dplyr::summarise(
+     Hours = sum(Hours, na.rm = TRUE),
+     Abbrev = first(Abbrev),
+     Count_yr = first(Count_yr)
+   )
 
 Check <- dcast(CBCEffort2, Abbrev + Count_yr~., length, value.var="Hours")
 if(max(unique(Check$.))!=1){stop("There are still cases of double hours!")}
 
 
-CBCCounts$SiteYear <- paste0(CBCCounts$Abbrev,"_", CBCCounts$Count_yr)
 CBCCounts_original <- CBCCounts # redundant, keeping for now...
-CBCCounts_premerge <- CBCCounts  %>% dplyr::select(-c(OID, Abbrev))
+# CBCCounts_premerge <- CBCCounts  %>% dplyr::select(-c(OID, Abbrev))
 
 CBCEffort2$SiteYear <- paste0(CBCEffort2$Abbrev,"_", CBCEffort2$Count_yr)
 CBCEffort2[,c("Abbrev", "Count_yr")] <- NULL
 
-CBCCounts3 <- merge(CBCCounts_premerge, CBCEffort2, by="SiteYear")
+BirdCounts2 <- BirdCounts
+BirdCounts2$SiteYear <- paste0(BirdCounts$Abbrev,"_", BirdCounts$Count_yr)
+
+CBCCounts <- merge(BirdCounts2, CBCEffort2, by="SiteYear")
 #Now sort out dates
 CBCCounts[,c("Year", "Month", "Day")] <- as.data.frame(str_split_fixed(CBCCounts$Cnt_dt, "[-]", 3))
 CBCCounts$Month <- as.numeric(as.character(CBCCounts$Month))
-CBCCounts[is.na(CBCCounts$Month),]$Month <- 0
+CBCCounts$Month[is.na(CBCCounts$Month)] <- 0
 CBCCounts <- subset(CBCCounts, Month!=3) #Remove march counts (only Dec, Jan, Feb)
 
 CBCCounts$Year <- 1900+CBCCounts$Count_yr
 
 CBCCounts$Day <- as.numeric(as.character(CBCCounts$Day))
-CBCCounts[is.na(CBCCounts$Day),]$Day <- 0
+CBCCounts$Day[is.na(CBCCounts$Day)] <- 0
 
 CBCCounts[,c("Count_yr", "Cnt_dt")] <- NULL
 
 #Now sort out double counts (sum by days counted, then mean by year)
 CBCCounts$SiteSpecYear <- paste0(CBCCounts$Abbrev, "_", CBCCounts$Species, "_", CBCCounts$Year)
-# CBCCountsNoHybrids <- subset(CBCCounts, HybridFlag==0)
 
-#Sum by date
-# # NOTE: removing SORT_CBC column compared to original, because doesn't exist in this dataset
-# 
-# # (Q) - What are hybrids? there's no hybrid flag...
-# CBCCountsNoHybrids[,c("COM_NAME", "GivenSpecies", "Editor_comment", "TotalSpecies")] <- NULL
-# 
-# 
-# keys <- colnames(CBCCountsNoHybrids)[!colnames(CBCCountsNoHybrids) %in% "how_many"]
-# CBCCountsNoHybrids2 <- CBCCountsNoHybrids[,list(Count=sum(how_many)),keys]
-# 
-# #Mean by year
-# CBCCountsNoHybrids2[,c("Month", "Day")] <- NULL
-# 
-# keys <- colnames(CBCCountsNoHybrids2)[!colnames(CBCCountsNoHybrids2) %in% "Count"]
-# CBCCountsNoHybrids3 <- CBCCountsNoHybrids2[,list(Count=round(mean(Count))),keys]
-# 
-# #Check
-# DoubleCountCheck <- dcast(CBCCountsNoHybrids3, SiteSpecYear~., length, value.var="Count")
-# if(max(unique(DoubleCountCheck$.))!=1){stop("There are still double counts!")}
-# 
-# #Recombine Data
-# CBCCountsHybrids <- subset(CBCCounts, HybridFlag==1)
-# # NOTE: removing SORT_CBC column compared to original, because doesn't exist in this dataset
-# CBCCountsHybrids[,c("COM_NAME", "GivenSpecies", "Editor_comment", "TotalSpecies", "Month", "Day", "how_many")] <- NULL
-# CBCCountsHybrids$Count <- NA
-
-# CBCCounts <- rbind(CBCCountsHybrids, CBCCountsNoHybrids3)
 CBCCounts[,c("SiteSpecYear", "SiteYear")] <- NULL
 
 #Remove multiple sites at the site coordinate:
@@ -414,11 +362,10 @@ CBCCounts <- CBCCounts[CBCCounts$Coordinates %in% subset(CBCCountsCast, .==1)$Co
 CBCCounts$Coordinates <- NULL
 
 #Check on a map
-#Map(unique(CBCCounts[,c("Latitude", "Longitude", "Abbrev")]))
+# Map(unique(CBCCounts[,c("Latitude", "Longitude", "Abbrev")]))
 
-# write.csv(CBCCounts, paste0(DataFP, "WaterbirdData_2020/CBC/CBCCounts_SpeciesEffortCleaned.csv"), row.names=FALSE)
 
-write.csv(CBCCounts, file.path(baci_home_dir, "data~", "output", "Wauchope", 'BirdCounts.csv'), row.names = FALSE)
+write.csv(CBCCounts, file.path(baci_home_dir, "data", "output", "Wauchope", 'BirdCounts.csv'), row.names = FALSE)
 
 
 
