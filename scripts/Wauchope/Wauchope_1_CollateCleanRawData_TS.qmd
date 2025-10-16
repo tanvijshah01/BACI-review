@@ -30,6 +30,7 @@ library(taxize)
 library(stringr)
 library(rredlist)
 library(dplyr)
+library(kableExtra)
 ```
 
 ## Read data
@@ -229,7 +230,7 @@ CBC_aggregated <- CBC_total_match %>%
   group_by(Abbrev, Count_yr, SCI_NAME, Latitude, Longitude) %>%
   dplyr::summarise(total_count = sum(how_many, na.rm = TRUE))
 
-CBC_aggregated <- CBC_aggregated %>% mutate(HybridFlag = 0)
+# CBC_aggregated <- CBC_aggregated %>% mutate(HybridFlag = 0)
 ```
 
 Handle Hybrids
@@ -246,17 +247,31 @@ hybrids_aggregated <- hybrids_keep %>%
 
 hybrids_aggregated <- hybrids_aggregated %>% mutate(HybridFlag = 1)
 
+# count number of hybrids vs totals
+per_hyb <- round(nrow(hybrids_aggregated) / (nrow(CBC_aggregated)+nrow(hybrids_aggregated)) * 100, 5)
+num_hyb <- nrow(hybrids_aggregated)
+num_non_hyb <- nrow(CBC_aggregated)
+
+
+
+df_nums <- data.frame(
+  count =  c(num_hyb, num_total, per_hyb),
+  dataset = c("hybrids", "non_hybrids", "percent of hybrids")
+)
+
+kable(df_nums, caption = "Hybrids are a small fraction of overall dataset. Removing from dataset before Impute step") %>%
+  kable_styling()
 # add hybrids back into full dataset 
 # create "hybrid flag" to keep track of hybrids and non-hybrids (remove hybrids for analysis)
 
-BirdCounts <- rbind(CBC_aggregated, hybrids_aggregated)
+BirdCounts <- CBC_aggregated
 ```
 
-## Zero Impute
+## Zero Impute - HW code
 
-```{# {r}
+```{r}
 # 
-# DataFP <- curr_data_path
+# BirdCounts <- rbind(CBCCounts, IWCCounts, fill=TRUE)
 # 
 # BirdCountsZeroImpute <- rbindlist(pbmclapply(unique(BirdCounts$SiteCode), function(x){
 #   SiteCounts <- subset(BirdCounts, SiteCode==x & HybridFlag==0)
@@ -286,6 +301,53 @@ BirdCounts <- rbind(CBC_aggregated, hybrids_aggregated)
 # #Some sites are lost, but only those without any counted species (either only hybrids, or only negative obs)
 # BirdCountsZeroImpute <- rbindlist(pblapply(list.files(path=paste0(DataFP, "WaterbirdData_2020/ZeroImputedSites/"), pattern="*.csv", full.names = TRUE), function(x) fread(x)), fill=TRUE)
 # BirdCountsZeroImpute[,c("HybridFlag", "HybridLevel", "HybridValue")] <- NULL
+# 
+# write.csv(BirdCountsZeroImpute, paste0(DataFP, "WaterbirdData_2020/BirdCounts.csv"), row.names=FALSE)
+# 
+
+```
+
+## Zero Impute
+
+```{r}
+
+CBC_aggregated <- CBC_aggregated %>% clean_names()
+
+# parse unique location variables
+unique_loc <- CBC_aggregated %>% distinct(abbrev)
+unique_lat_long <- CBC_aggregated %>% distinct(latitude, longitude)
+unique_lat <- unique(CBC_aggregated$latitude)
+unique_long <- unique(CBC_aggregated$longitude)
+
+df_loc <- data.frame(
+  category = c("unique locations", "unique abbrevs", "unique lat long pairs", "unique lats", "unique longs"),
+  count = c(nrow(unique_loc), length(unique_abbrev), nrow(unique_lat_long), length(unique_lat), length(unique_long))
+)
+kable(df_loc)
+
+
+# ultimately, just group by site  (Abbreviation) since lat and long seem to have some kind of drift
+unique_abbrev <- unique(CBC_aggregated$abbrev)
+CBC_unique_species <- unique(CBC_aggregated$sci_name)
+unique_years <- unique(CBC_aggregated$count_yr)
+
+# need ungroup df prior to join
+CBC_aggregated <- CBC_aggregated %>% ungroup()
+
+# create a dataframe of timeseries, for each species and site 
+CBC_perms <- expand.grid(
+  sci_name = CBC_unique_species, 
+  count_yr = unique_years, 
+  abbrev = unique_abbrev)
+
+# remove lat and long from CBC_aggregate since the Abbrev alone is enough
+CBC_pre_join <- CBC_aggregated%>% ungroup() %>% dplyr::select(-latitude, -longitude)
+
+# left join to fill in gaps in time series with 0
+CBC_zero_impute <- CBC_perms %>%
+  left_join(CBC_pre_join, 
+            by = c("abbrev", "count_yr", "sci_name" ))
+
 ```
 
 ## Get Effort
@@ -364,9 +426,9 @@ CBCCounts$Coordinates <- NULL
 #Check on a map
 # Map(unique(CBCCounts[,c("Latitude", "Longitude", "Abbrev")]))
 
-
-write.csv(CBCCounts, file.path(baci_home_dir, "data", "output", "Wauchope", 'BirdCounts.csv'), row.names = FALSE)
-
+# 
+# write.csv(CBCCounts, file.path(baci_home_dir, "data", "output", "Wauchope", 'BirdCounts.csv'), row.names = FALSE)
+# 
 
 
 ```
