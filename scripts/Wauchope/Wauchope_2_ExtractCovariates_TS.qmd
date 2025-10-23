@@ -21,12 +21,12 @@ Takes the data cleaned in Script 1 and extracts site and species specific covari
   library(ncdf4)
   # library(chron) - no longer exists
   library(raster)
-  library(rlist)
+  # library(rlist)
   library(stringr)
   library(tidyverse)
   library(abind)
   library(plyr)
-  library(ClusterR)
+  # library(ClusterR)
 ```
 
 Define Data Directory
@@ -103,6 +103,26 @@ SnapPoints2 <- function(Variable, WaterbirdCounts, SitesSnap){
   return(WaterbirdCounts)
 }
 ```
+
+## Data Sources
+
+1\) Climate
+
+-   <https://data.ceda.ac.uk/badc/cru/data/cru_ts/cru_ts_4.09/data>
+
+-   download temperature and precipitation
+
+2\) Fertilizer
+
+-   <https://essd.copernicus.org/articles/9/181/2017/essd-9-181-2017-assets.html>
+
+3\) Landuse
+
+-   <https://archaeology.datastations.nl/dataset.xhtml?persistentId=doi:10.17026/DANS-25G-GEZ3>
+
+4\) Species Distribution Polygons
+
+-   <https://datazone.birdlife.org/contact-us/request-our-data> (Data request form - choose species distribution maps)
 
 ## Initial Clean
 
