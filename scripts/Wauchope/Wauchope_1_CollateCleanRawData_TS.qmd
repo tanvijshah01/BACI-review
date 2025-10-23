@@ -255,14 +255,13 @@ num_non_hyb <- nrow(CBC_aggregated)
 
 
 df_nums <- data.frame(
-  count =  c(num_hyb, num_total, per_hyb),
-  dataset = c("hybrids", "non_hybrids", "percent of hybrids")
+  count =  c(num_hyb, num_non_hyb, per_hyb),
+  dataset = c("hybrids", "non_hybrids", "percent of hybrids in total")
 )
 
-kable(df_nums, caption = "Hybrids are a small fraction of overall dataset. Removing from dataset before Impute step") %>%
+kable(df_nums, caption = "Hybrids are a small fraction of overall dataset. Not including hybrids in BirdCounts dataset") %>%
   kable_styling()
-# add hybrids back into full dataset 
-# create "hybrid flag" to keep track of hybrids and non-hybrids (remove hybrids for analysis)
+
 
 BirdCounts <- CBC_aggregated
 ```
@@ -314,20 +313,22 @@ BirdCounts <- CBC_aggregated
 CBC_aggregated <- CBC_aggregated %>% clean_names()
 
 # parse unique location variables
-unique_loc <- CBC_aggregated %>% distinct(abbrev)
+unique_abbrev <- unique(CBC_aggregated$abbrev)
 unique_lat_long <- CBC_aggregated %>% distinct(latitude, longitude)
 unique_lat <- unique(CBC_aggregated$latitude)
 unique_long <- unique(CBC_aggregated$longitude)
 
 df_loc <- data.frame(
-  category = c("unique locations", "unique abbrevs", "unique lat long pairs", "unique lats", "unique longs"),
-  count = c(nrow(unique_loc), length(unique_abbrev), nrow(unique_lat_long), length(unique_lat), length(unique_long))
+  category = c( "unique abbrevs", "unique lat long pairs", "unique lats", "unique longs"),
+  count = c(length(unique_abbrev), nrow(unique_lat_long), length(unique_lat), length(unique_long))
 )
-kable(df_loc)
 
 
-# ultimately, just group by site  (Abbreviation) since lat and long seem to have some kind of drift
-unique_abbrev <- unique(CBC_aggregated$abbrev)
+# Ultimately, just group by site  (Abbreviation) since lat and long seem to have some kind of drift
+
+kable(df_loc, caption = "Decision to group by site  (Abbreviation) since lat and long seem to have some kind of drift") %>% kable_styling()
+
+
 CBC_unique_species <- unique(CBC_aggregated$sci_name)
 unique_years <- unique(CBC_aggregated$count_yr)
 
@@ -427,8 +428,9 @@ CBCCounts$Coordinates <- NULL
 # Map(unique(CBCCounts[,c("Latitude", "Longitude", "Abbrev")]))
 
 # 
-# write.csv(CBCCounts, file.path(baci_home_dir, "data", "output", "Wauchope", 'BirdCounts.csv'), row.names = FALSE)
-# 
+write.csv(CBCCounts, file.path(baci_home_dir, "data", "output", "Wauchope",
+'BirdCounts.csv'), row.names = FALSE)
+
 
 
 ```
