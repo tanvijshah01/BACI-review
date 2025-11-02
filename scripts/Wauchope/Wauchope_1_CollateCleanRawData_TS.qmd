@@ -102,6 +102,10 @@ waterbird_families <- c(
 
 # useful for debugging
 alphabetized_waterbird_families <- sort(waterbird_families)
+
+# save this as CSV for reuse 
+waterbird_path <- file.path(curr_data_path, "output","Wauchope", "waterbird_families.csv")
+write.csv(alphabetized_waterbird_families, waterbird_path, row.names=FALSE)
 ```
 
 Step 0: Separate hybrid entries
@@ -118,7 +122,7 @@ split_hybrids <- hybrids %>%
   separate(SCI_NAME, into = c("Hybrid1", "Hybrid2"), sep = " x ", fill = "right", remove = FALSE)
 
 split_hybrids
-# filter out non-waterbirds
+
 
 
 ```

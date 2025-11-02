@@ -16,8 +16,8 @@ Takes the data cleaned in Script 1 and extracts site and species specific covari
   library(pbapply)
   library(pbmcapply)
   library(dplyr)
-# library(rgdal) - no longer exists
-# library(rgeos) - no longer exists
+  # library(rgdal) - no longer exists
+  # library(rgeos) - no longer exists
   library(ncdf4)
   # library(chron) - no longer exists
   library(raster)
@@ -26,6 +26,11 @@ Takes the data cleaned in Script 1 and extracts site and species specific covari
   library(tidyverse)
   library(abind)
   library(plyr)
+  ## raster snapping libraries (in place of QGIS)
+  library(raster)
+  library(sp)
+  library(rgeos)
+  library(sf)
   # library(ClusterR)
 ```
 
@@ -49,16 +54,29 @@ Takes the data cleaned in Script 1 and extracts site and species specific covari
 
 -   <https://datazone.birdlife.org/contact-us/request-our-data> (Data request form - choose species distribution maps)
 
+5\)
+
+6\)
+
 ## Define Data Directory
 
 ```{r}
-
+library(terra)
 # get current directory, make sure project is open 
 baci_home_dir <-here::here()
 # navigate to data directory
 curr_data_path <- file.path(baci_home_dir, 'data')
 
-birdcounts <- read_csv(file.path(curr_data_path, "output", "Wauchope", 'BirdCounts.csv'))
+birdcounts <- read_csv(file.path(curr_data_path, 'output', 'Wauchope', 'BirdCounts.csv'))
+
+# Read vector data
+BirdPolygons <- vect(b_path)
+
+
+library(sf)
+b_path <- file.path(curr_data_path,'raw_data', 'Wauchope',"BOTW_2025.gpkg")
+BirdPolygons <- st_read(b_path)
+BirdPolygons <- as(BirdPolygons, "Spatial")  # 
 
 ```
 
@@ -74,54 +92,107 @@ MollCRS <- CRS("+proj=moll +lon_0=0 +x_0=0 +y_0=0 +ellps=WGS84 +units=m +no_defs
 Snap site to nearest raster cell of each covariate
 
 ```{r}
-#### Snap function ####
-#I use these two functions to snap sites to the nearest raster cell for the various covariates. Because R is slow, these functions involve exporting data and running part of the analysis in QGIS (all explained in functions)
-SnapPoints1 <- function(Variable, TemplateFunction, WaterbirdCounts){
-  #Create template raster of same extent/rest as the variable data, but with a unique value for each gridcell
+
+
+
+WGSCRS <- CRS("+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0")
+MollCRS <- CRS("+proj=moll +lon_0=0 +x_0=0 +y_0=0 +ellps=WGS84 +units=m +no_defs")
+
+SnapPoints_12_in_R <- function(Variable, TemplateFunction, WaterbirdCounts){
+  
+  # Create template raster with unique values for each cell
   Template <- TemplateFunction
   Template[!is.na(Template)] <- 1:length(Template[!is.na(Template)])
   crs(Template) <- WGSCRS
-  writeRaster(Template, file=paste0(DataFP, "WaterbirdData_2020/Covariates/Snap/", Variable, "/Template.tif"), format="GTiff", overwrite=TRUE)
-
-  #Make a points file of sites
+  writeRaster(Template, file=paste0(DataFP, "WaterbirdData_2020/Covariates/Snap/", Variable, "/Template.tif"), 
+              format="GTiff", overwrite=TRUE)
+  
+  # Make a points file of sites
   Sites <- unique(WaterbirdCounts[,c("SiteCode", "Latitude", "Longitude")])
   SitesPoints <- cbind(Sites$Longitude, Sites$Latitude)
   SitesPoints <- SpatialPointsDataFrame(SitesPoints, Sites, proj4string = WGSCRS)
   
-  #Find which points don't overlap and write to csv
+  # Find which points don't overlap with raster
   RasterExtract <- as.vector(raster::extract(Template, SitesPoints, method="simple"))
   Sites$Polygon <- RasterExtract
   SitesNA <- Sites[is.na(Sites$Polygon),]
   
-  SitesNASHP <- cbind(SitesNA$Longitude, SitesNA$Latitude)
-  SitesNASHP <- SpatialPointsDataFrame(SitesNASHP, SitesNA, proj4string = CRS("+proj=longlat +datum=WGS84 +no_defs +ellps=WGS84 +towgs84=0,0,0"))
+  # If all points overlap, we're done
+  if(nrow(SitesNA) == 0){
+    Sites$Longitude <- Sites$Longitude  # Keep original coords
+    Sites$Latitude <- Sites$Latitude
+    Sites$Polygon <- NULL
+    names(Sites) <- c("SiteCode", paste0("Lat", Variable), paste0("Lon", Variable))
+    return(Sites)
+  }
+  
+  # For points that don't overlap, snap to nearest cell
+  print(paste0("Snapping ", nrow(SitesNA), " points to nearest raster cells..."))
+  
+  # Project template to Mollweide
+  TemplateMoll <- projectRaster(Template, crs=MollCRS, method="ngb")
+  
+  # Convert raster to polygons in Mollweide projection
+  TemplatePolygons <- rasterToPolygons(TemplateMoll, dissolve=FALSE)
+  names(TemplatePolygons) <- "UniqueValue"
+  
+  # Project NA sites to Mollweide
+  SitesNASHP <- SpatialPointsDataFrame(
+    cbind(SitesNA$Longitude, SitesNA$Latitude), 
+    SitesNA, 
+    proj4string = WGSCRS
+  )
   SitesNASHPMoll <- spTransform(SitesNASHP, MollCRS)
   
-  writeOGR(SitesNASHPMoll, paste0(DataFP, "WaterbirdData_2020/Covariates/Snap/", Variable, "/"), "NASitesMoll", driver="ESRI Shapefile", overwrite=TRUE)
-  print("Then in QGIS: Import template tif, convert to mollweide (Raster-->Projections-->Warp Raster) and save as TemplateMoll.tif, restart QGIS, then convert to shapefile (Raster-->Conversion-->Polgonise), name the field UniqueValue . *** Import NASitesMoll. Find nearest polygon for each point and distance to the edge of the polygon (Vector-->NNJoin [make sure NNJoin plugin is installed]). *** Export joined points as csv, NASitesJoined.csv, (Right click on layer-->Export-->Save features as-->change to .csv")
-  return(Sites)
-}
-SnapPoints2 <- function(Variable, WaterbirdCounts, SitesSnap){
-  TemplatePoints <- as.data.frame(rasterToPoints(raster(paste0(DataFP, "WaterbirdData_2020/Covariates/Snap/", Variable, "/Template.tif"))))
+  # Find nearest polygon for each point
+  NearestResults <- data.frame(
+    SiteCode = character(nrow(SitesNA)),
+    join_UniqueValue = numeric(nrow(SitesNA)),
+    distance = numeric(nrow(SitesNA)),
+    stringsAsFactors = FALSE
+  )
+  
+  for(i in 1:nrow(SitesNASHPMoll)){
+    # Calculate distance to all polygons
+    distances <- gDistance(SitesNASHPMoll[i,], TemplatePolygons, byid=TRUE)
+    
+    # Find nearest
+    nearest_idx <- which.min(distances)
+    
+    NearestResults$SiteCode[i] <- as.character(SitesNASHPMoll$SiteCode[i])
+    NearestResults$join_UniqueValue[i] <- TemplatePolygons$UniqueValue[nearest_idx]
+    NearestResults$distance[i] <- min(distances)
+  }
+  
+  # Get coordinates of the nearest cells (back in WGS84)
+  TemplatePoints <- as.data.frame(rasterToPoints(Template))
   names(TemplatePoints) <- c("Longitude", "Latitude", "UniqueValue")
   
-  NAPointsSnap <- read.csv(paste0(DataFP, "WaterbirdData_2020/Covariates/Snap/", Variable, "/NASitesJoined.csv"))
+  # Merge to get snapped coordinates
+  NAPointsSnap <- merge(NearestResults, TemplatePoints, 
+                        by.x="join_UniqueValue", by.y="UniqueValue")
   
-  NAPointsSnap <- merge(NAPointsSnap[,c("SiteCode", "join_UniqueValu", "distance")], TemplatePoints, by.x="join_UniqueValu", by.y="UniqueValue")
-  NAPointsSnap$join_UniqueValu <- NULL
+  # Filter to points within 50km
+  NAPointsSnapCut <- subset(NAPointsSnap, distance < 50000)
+  NAPointsSnapCut <- NAPointsSnapCut[, c("SiteCode", "Latitude", "Longitude")]
   
-  #Now take sites less than 50km from the nearest grid cell
-  NAPointsSnapCut <- subset(NAPointsSnap, distance<50000)
-  NAPointsSnapCut$distance <- NULL
-  SitesSnap$Polygon <- NULL
-  Sites <- SitesSnap[!SitesSnap$SiteCode %in% NAPointsSnap$SiteCode]
-  Sites <- rbind(Sites, NAPointsSnapCut)
-  names(Sites) <- c("SiteCode", paste0("Lat", Variable), paste0("Lon", Variable))
-  write.csv(NAPointsSnapCut, paste0(DataFP, "WaterbirdData_2020/Covariates/Snap/", Variable, "/SnapCheck.csv"), row.names=FALSE)
-  WaterbirdCounts <- merge(WaterbirdCounts, Sites, by="SiteCode")
-  print("Be sure to import the SnapCheck csv into QGIS to check everything looks right. Bear in mind that everything will look off because of how QGIS displays the raster, but if you overlay the original template raster (not TemplateMoll), it will look right")
+  print(paste0("Snapped ", nrow(NAPointsSnapCut), " points within 50km. ",
+               nrow(SitesNA) - nrow(NAPointsSnapCut), " points were >50km from nearest cell and excluded."))
+  
+  # Combine with sites that did overlap
+  Sites$Polygon <- NULL
+  SitesOverlap <- Sites[!Sites$SiteCode %in% SitesNA$SiteCode, ]
+  SitesFinal <- rbind(SitesOverlap, NAPointsSnapCut)
+  
+  names(SitesFinal) <- c("SiteCode", paste0("Lat", Variable), paste0("Lon", Variable))
+  
+  # Merge with original data
+  WaterbirdCounts <- merge(WaterbirdCounts, SitesFinal, by="SiteCode")
+  
   return(WaterbirdCounts)
 }
+
+
 ```
 
 ## Initial Clean
